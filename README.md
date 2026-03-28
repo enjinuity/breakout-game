@@ -4,11 +4,15 @@ A classic Breakout-style game implemented in Python using Pygame.
 Created as part of the CSC222 Game Development mini-project (2024 Edition).
 
 ## 🎮 Features
-- Ball-paddle-brick collision system
-- Sound effects (brick hit, wall bounce, paddle bounce, life loss, game over)
-- Powerups: extra life, bigger paddle, multiball
-- Menu, win, and game over screens
-- Score + lives tracking
+- Improved ball collision response (side-aware brick bounce + paddle angle control)
+- Multiple level layouts with progression and increasing difficulty
+- Brick variants: normal, strong (2 hits), unbreakable, explosive (AOE break)
+- Powerups: extra life, bigger paddle, multiball, laser, slow-motion, sticky paddle, shield
+- Hazard drops: smaller paddle and faster ball
+- Combo scoring multiplier + high-score persistence (`high_score.json`)
+- Menu + pause + game-over states, volume controls, alternative movement keys
+- Visual polish: particles, screen shake, level intro flash, transition fade
+- Sound effects with optional looping music support (`assets/sounds/bgm.wav` if provided)
 
 ## 🚀 How to Run
 1. Install pygame:
@@ -16,9 +20,19 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
    pip install pygame
 2. Run the game:
    ```bash
-   python main.py
+   python3 main.py
 
 Requires Python 3.x and Pygame installed
+
+## 🎯 Controls
+- `Left / Right` to move paddle
+- `A / D` to switch to alternate movement keys
+- `Space` to launch attached ball
+- `F` to fire laser (when laser charges are active)
+- `P` to pause/unpause gameplay
+- `M / N` volume up/down
+- `Enter` start/restart
+- `Esc` return to menu (or quit from menu)
 
 ## 🗂️ Folder Structure
 
