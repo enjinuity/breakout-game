@@ -16,10 +16,12 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 - Dedicated Settings screen (master/SFX/music levels, controls preset, fullscreen, BGM)
 - Campaign mode with a proper completion state
 - Boss waves every 3 levels (moving boss + hazard drops + boss HP bar)
+- Boss attack patterns (spread shots, rain shots, pressure phase)
 - Round start countdown + contextual control hints
 - Menu now shows BGM status with toggle and playback fallback
 - Visual polish: particles, screen shake, level intro flash, transition fade
 - Sound effects with optional looping music support (`assets/sounds/bgm.wav` if provided)
+- Persistent player profile (`player_profile.json`): settings + lifetime stats
 
 ## 🚀 How to Run
 1. Install pygame:

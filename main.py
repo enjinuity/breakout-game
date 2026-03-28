@@ -25,6 +25,7 @@ SMALL_FONT = pygame.font.SysFont("arial", 18)
 BIG_FONT = pygame.font.SysFont("arial", 56)
 
 HIGH_SCORE_FILE = "high_score.json"
+PROFILE_FILE = "player_profile.json"
 
 
 def load_sound(path):
@@ -136,10 +137,93 @@ class Game:
         self.boss_brick = None
         self.boss_direction = 1
         self.boss_attack_timer = 0
+        self.boss_projectiles = []
+        self.boss_pattern_index = 0
+        self.run_active = False
+
+        self.profile = self.load_profile()
+        self.apply_profile_settings()
+        if self.fullscreen:
+            global SCREEN
+            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+            pygame.display.set_caption("Breakout: Arcade Edition")
 
         self.reset_run(full_reset=True)
         self.apply_volume()
         self.try_start_music()
+
+    def default_profile(self):
+        return {
+            "high_score": 0,
+            "settings": {
+                "master_volume": 0.7,
+                "sfx_volume": 0.9,
+                "music_volume": 0.6,
+                "bgm_enabled": True,
+                "controls": "ARROWS",
+                "fullscreen": False,
+            },
+            "stats": {
+                "runs_started": 0,
+                "runs_completed": 0,
+                "campaign_wins": 0,
+                "bosses_defeated": 0,
+                "bricks_broken": 0,
+                "best_level_reached": 1,
+                "lifetime_score": 0,
+            },
+        }
+
+    def load_profile(self):
+        profile = self.default_profile()
+        if os.path.exists(PROFILE_FILE):
+            try:
+                with open(PROFILE_FILE, "r", encoding="utf-8") as file:
+                    data = json.load(file)
+                if isinstance(data, dict):
+                    profile.update({k: v for k, v in data.items() if k in profile and isinstance(v, dict) is False})
+                    if isinstance(data.get("settings"), dict):
+                        profile["settings"].update(data["settings"])
+                    if isinstance(data.get("stats"), dict):
+                        profile["stats"].update(data["stats"])
+            except (ValueError, OSError, json.JSONDecodeError):
+                pass
+
+        legacy_high = self.load_high_score()
+        profile["high_score"] = max(int(profile.get("high_score", 0)), legacy_high)
+        return profile
+
+    def save_profile(self):
+        self.profile["high_score"] = int(self.high_score)
+        self.profile["settings"] = {
+            "master_volume": self.volume,
+            "sfx_volume": self.sfx_volume,
+            "music_volume": self.music_volume,
+            "bgm_enabled": self.bgm_enabled,
+            "controls": self.controls_label(),
+            "fullscreen": self.fullscreen,
+        }
+        try:
+            with open(PROFILE_FILE, "w", encoding="utf-8") as file:
+                json.dump(self.profile, file, indent=2)
+        except OSError:
+            pass
+        self.save_high_score()
+
+    def apply_profile_settings(self):
+        settings = self.profile.get("settings", {})
+        self.high_score = max(int(self.high_score), int(self.profile.get("high_score", 0)))
+        self.volume = float(settings.get("master_volume", self.volume))
+        self.sfx_volume = float(settings.get("sfx_volume", self.sfx_volume))
+        self.music_volume = float(settings.get("music_volume", self.music_volume))
+        self.bgm_enabled = bool(settings.get("bgm_enabled", self.bgm_enabled))
+        if settings.get("controls", "ARROWS") == "WASD":
+            self.left_key = pygame.K_a
+            self.right_key = pygame.K_d
+        else:
+            self.left_key = pygame.K_LEFT
+            self.right_key = pygame.K_RIGHT
+        self.fullscreen = bool(settings.get("fullscreen", self.fullscreen))
 
     def load_high_score(self):
         if not os.path.exists(HIGH_SCORE_FILE):
@@ -207,6 +291,7 @@ class Game:
     def toggle_bgm(self):
         self.bgm_enabled = not self.bgm_enabled
         self.apply_volume()
+        self.save_profile()
 
     def toggle_controls_preset(self):
         if self.left_key == pygame.K_LEFT:
@@ -215,6 +300,7 @@ class Game:
         else:
             self.left_key = pygame.K_LEFT
             self.right_key = pygame.K_RIGHT
+        self.save_profile()
 
     def controls_label(self):
         return "ARROWS" if self.left_key == pygame.K_LEFT else "WASD"
@@ -227,13 +313,26 @@ class Game:
         else:
             SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Breakout: Arcade Edition")
+        self.save_profile()
 
     def open_settings(self, return_state):
         self.settings_return_state = return_state
         self.settings_index = 0
         self.game_state = "SETTINGS"
 
+    def finalize_run(self):
+        if not self.run_active:
+            return
+        stats = self.profile["stats"]
+        stats["runs_completed"] = int(stats.get("runs_completed", 0)) + 1
+        stats["lifetime_score"] = int(stats.get("lifetime_score", 0)) + int(self.score)
+        stats["best_level_reached"] = max(int(stats.get("best_level_reached", 1)), int(self.level))
+        self.run_active = False
+        self.save_profile()
+
     def start_new_game(self):
+        if self.run_active:
+            self.finalize_run()
         config = DIFFICULTY_CONFIG[self.difficulty]
         self.starting_lives = config["lives"]
         self.ball_speed_base = config["speed"]
@@ -242,6 +341,9 @@ class Game:
         self.score_mult = config["score_mult"]
         self.game_state = "PLAYING"
         self.paused = False
+        self.run_active = True
+        self.profile["stats"]["runs_started"] = int(self.profile["stats"].get("runs_started", 0)) + 1
+        self.save_profile()
         self.reset_run(full_reset=True)
 
     def reset_run(self, full_reset):
@@ -275,6 +377,8 @@ class Game:
         self.boss_brick = None
         self.boss_direction = 1
         self.boss_attack_timer = max(120, 300 - self.level * 10)
+        self.boss_projectiles = []
+        self.boss_pattern_index = 0
 
     def is_boss_level(self, level):
         return level % BOSS_LEVEL_INTERVAL == 0
@@ -521,9 +625,78 @@ class Game:
         # Boss periodically launches hazard drops.
         self.boss_attack_timer -= 1
         if self.boss_attack_timer <= 0:
-            hazard = random.choice(["small", "fast"])
-            self.spawn_specific_powerup(self.boss_brick.rect.centerx, self.boss_brick.rect.bottom + 4, hazard)
-            self.boss_attack_timer = max(90, 270 - self.level * 8)
+            pattern = self.boss_pattern_index % 3
+            if pattern == 0:
+                # Triple spread shots.
+                for off in (-80, 0, 80):
+                    self.boss_projectiles.append(
+                        {
+                            "x": self.boss_brick.rect.centerx + off,
+                            "y": self.boss_brick.rect.bottom + 6,
+                            "dx": off * 0.008,
+                            "dy": 3.6 + self.level * 0.1,
+                            "r": 7,
+                            "color": (255, 120, 120),
+                        }
+                    )
+                self.set_power_message("Boss attack: spread")
+            elif pattern == 1:
+                # Vertical rain line.
+                for off in (-120, -60, 0, 60, 120):
+                    self.boss_projectiles.append(
+                        {
+                            "x": self.boss_brick.rect.centerx + off,
+                            "y": self.boss_brick.rect.bottom + 4,
+                            "dx": 0,
+                            "dy": 4.0 + self.level * 0.08,
+                            "r": 6,
+                            "color": (255, 90, 70),
+                        }
+                    )
+                self.set_power_message("Boss attack: rain")
+            else:
+                # Pressure drop + single hazard powerup.
+                hazard = random.choice(["small", "fast"])
+                self.spawn_specific_powerup(self.boss_brick.rect.centerx, self.boss_brick.rect.bottom + 4, hazard)
+                self.boss_projectiles.append(
+                    {
+                        "x": self.boss_brick.rect.centerx,
+                        "y": self.boss_brick.rect.bottom + 8,
+                        "dx": 0,
+                        "dy": 4.8 + self.level * 0.12,
+                        "r": 9,
+                        "color": (255, 160, 80),
+                    }
+                )
+                self.set_power_message("Boss attack: pressure")
+
+            self.boss_pattern_index += 1
+            self.boss_attack_timer = max(78, 230 - self.level * 8)
+
+    def update_boss_projectiles(self):
+        if not self.boss_projectiles:
+            return
+
+        next_projectiles = []
+        for proj in self.boss_projectiles:
+            proj["x"] += proj["dx"]
+            proj["y"] += proj["dy"]
+            if proj["y"] > HEIGHT + proj["r"]:
+                continue
+
+            rect = pygame.Rect(int(proj["x"] - proj["r"]), int(proj["y"] - proj["r"]), proj["r"] * 2, proj["r"] * 2)
+            if rect.colliderect(self.paddle.rect):
+                if self.shield_active:
+                    self.shield_active = False
+                    self.spawn_particles(int(proj["x"]), int(proj["y"]), (80, 240, 170), count=8)
+                else:
+                    self.apply_powerup(PowerUp(self.paddle.rect.centerx, self.paddle.rect.y, 20, 20, random.choice(["small", "fast"])))
+                    self.spawn_particles(int(proj["x"]), int(proj["y"]), proj["color"], count=10)
+                continue
+
+            next_projectiles.append(proj)
+
+        self.boss_projectiles = next_projectiles
 
     def update_combo(self):
         if self.combo_timer > 0:
@@ -573,6 +746,7 @@ class Game:
                 if self.score > self.high_score:
                     self.high_score = self.score
                     self.save_high_score()
+                self.finalize_run()
                 return
 
             self.ball_attached = True
@@ -603,6 +777,7 @@ class Game:
                     self.combo_timer = 90
                     points = int(brick.points * (1 + self.combo * 0.15))
                     self.award_points(points)
+                    self.profile["stats"]["bricks_broken"] = int(self.profile["stats"].get("bricks_broken", 0)) + 1
                     self.spawn_powerup(brick.rect.centerx, brick.rect.centery)
 
                     if brick.brick_type == "explosive":
@@ -612,6 +787,9 @@ class Game:
                         self.shake_frames = 18
                         self.shake_strength = 6
                         self.boss_brick = None
+                        self.boss_projectiles = []
+                        self.profile["stats"]["bosses_defeated"] = int(self.profile["stats"].get("bosses_defeated", 0)) + 1
+                        self.save_profile()
                     else:
                         self.shake_frames = 5
                         self.shake_strength = 3
@@ -637,9 +815,15 @@ class Game:
             if self.score > self.high_score:
                 self.high_score = self.score
                 self.save_high_score()
+            self.profile["stats"]["campaign_wins"] = int(self.profile["stats"].get("campaign_wins", 0)) + 1
+            self.finalize_run()
             return
 
         self.level += 1
+        self.profile["stats"]["best_level_reached"] = max(
+            int(self.profile["stats"].get("best_level_reached", 1)),
+            int(self.level),
+        )
         self.ball_speed_base = min(10.0, self.ball_speed_base + self.level_speed_step)
         self.powerup_base_chance = max(0.1, self.powerup_base_chance - 0.02)
         self.reset_run(full_reset=False)
@@ -699,6 +883,10 @@ class Game:
 
         for powerup in self.powerups:
             powerup.draw(surf, SMALL_FONT)
+
+        for proj in self.boss_projectiles:
+            pygame.draw.circle(surf, proj["color"], (int(proj["x"]), int(proj["y"])), proj["r"])
+            pygame.draw.circle(surf, (20, 20, 20), (int(proj["x"]), int(proj["y"])), proj["r"], 2)
 
         self.paddle.draw(surf)
         for ball in self.balls:
@@ -760,6 +948,12 @@ class Game:
         diff_help = SMALL_FONT.render("Use UP/DOWN to change difficulty", True, (200, 200, 200))
         bgm_state = "ON" if self.bgm_enabled and self.bgm_loaded else "OFF"
         bgm = SMALL_FONT.render(f"BGM: {bgm_state} (B to toggle)", True, (190, 220, 190))
+        stats = self.profile.get("stats", {})
+        stats_line = SMALL_FONT.render(
+            f"Runs: {stats.get('runs_completed', 0)}  Wins: {stats.get('campaign_wins', 0)}  Bosses: {stats.get('bosses_defeated', 0)}",
+            True,
+            (190, 190, 220),
+        )
         if self.bgm_error:
             bgm_note = SMALL_FONT.render(f"BGM note: {self.bgm_error}", True, (220, 160, 160))
         else:
@@ -771,6 +965,7 @@ class Game:
         surf.blit(diff, (WIDTH // 2 - diff.get_width() // 2, HEIGHT // 2 + 54))
         surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, HEIGHT // 2 + 86))
         surf.blit(bgm, (WIDTH // 2 - bgm.get_width() // 2, HEIGHT // 2 + 114))
+        surf.blit(stats_line, (WIDTH // 2 - stats_line.get_width() // 2, HEIGHT // 2 + 164))
         if bgm_note:
             surf.blit(bgm_note, (WIDTH // 2 - bgm_note.get_width() // 2, HEIGHT // 2 + 138))
         surf.blit(settings, (WIDTH // 2 - settings.get_width() // 2, HEIGHT - 50))
@@ -849,6 +1044,7 @@ class Game:
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                self.finalize_run()
                 self.save_high_score()
                 pygame.quit()
                 sys.exit()
@@ -870,12 +1066,15 @@ class Game:
                     if self.settings_index == 0:
                         self.volume = max(0.0, min(1.0, self.volume + direction * 0.05))
                         self.apply_volume()
+                        self.save_profile()
                     elif self.settings_index == 1:
                         self.sfx_volume = max(0.0, min(1.0, self.sfx_volume + direction * 0.05))
                         self.apply_volume()
+                        self.save_profile()
                     elif self.settings_index == 2:
                         self.music_volume = max(0.0, min(1.0, self.music_volume + direction * 0.05))
                         self.apply_volume()
+                        self.save_profile()
                     elif self.settings_index == 3:
                         self.toggle_bgm()
                     elif self.settings_index == 4:
@@ -900,6 +1099,7 @@ class Game:
                 elif self.game_state in {"GAME_OVER", "CAMPAIGN_WIN"}:
                     self.game_state = "MENU"
                 elif self.game_state == "MENU":
+                    self.finalize_run()
                     self.save_high_score()
                     pygame.quit()
                     sys.exit()
@@ -923,6 +1123,7 @@ class Game:
             if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_r:
                 self.start_new_game()
             if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_q:
+                self.finalize_run()
                 self.game_state = "MENU"
                 self.paused = False
             if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_o:
@@ -931,9 +1132,11 @@ class Game:
             if event.key == pygame.K_m:
                 self.volume = min(1.0, self.volume + 0.1)
                 self.apply_volume()
+                self.save_profile()
             if event.key == pygame.K_n:
                 self.volume = max(0.0, self.volume - 0.1)
                 self.apply_volume()
+                self.save_profile()
             if event.key == pygame.K_b:
                 self.toggle_bgm()
 
@@ -953,6 +1156,7 @@ class Game:
 
             self.update_balls(keys)
             self.update_boss_mechanics()
+            self.update_boss_projectiles()
             self.update_brick_collisions()
             self.update_powerups()
             self.update_combo()
