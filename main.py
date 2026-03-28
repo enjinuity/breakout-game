@@ -70,6 +70,14 @@ LEVEL_LAYOUTS = [
     ],
 ]
 
+DIFFICULTY_CONFIG = {
+    "EASY": {"lives": 5, "speed": 5.4, "drop_chance": 0.30, "speed_step": 0.45, "score_mult": 0.9},
+    "NORMAL": {"lives": 3, "speed": 6.0, "drop_chance": 0.24, "speed_step": 0.55, "score_mult": 1.0},
+    "HARD": {"lives": 2, "speed": 6.6, "drop_chance": 0.20, "speed_step": 0.65, "score_mult": 1.2},
+}
+
+CAMPAIGN_LEVELS = 9
+
 
 class Game:
     def __init__(self):
@@ -79,8 +87,13 @@ class Game:
         self.left_key = pygame.K_LEFT
         self.right_key = pygame.K_RIGHT
 
-        self.ball_speed_base = 6.0
-        self.powerup_base_chance = 0.24
+        self.difficulty_order = ["EASY", "NORMAL", "HARD"]
+        self.difficulty_index = 1
+        self.difficulty = self.difficulty_order[self.difficulty_index]
+        self.ball_speed_base = DIFFICULTY_CONFIG[self.difficulty]["speed"]
+        self.powerup_base_chance = DIFFICULTY_CONFIG[self.difficulty]["drop_chance"]
+        self.level_speed_step = DIFFICULTY_CONFIG[self.difficulty]["speed_step"]
+        self.score_mult = DIFFICULTY_CONFIG[self.difficulty]["score_mult"]
 
         self.game_state = "MENU"
         self.transition_alpha = 255
@@ -106,6 +119,8 @@ class Game:
 
         self.level = 1
         self.level_flash_timer = 0
+        self.round_start_countdown = 0
+        self.tutorial_timer = 480
 
         self.reset_run(full_reset=True)
         self.apply_volume()
@@ -147,13 +162,36 @@ class Game:
             except pygame.error:
                 return
 
+    def update_difficulty(self, direction):
+        self.difficulty_index = (self.difficulty_index + direction) % len(self.difficulty_order)
+        self.difficulty = self.difficulty_order[self.difficulty_index]
+        config = DIFFICULTY_CONFIG[self.difficulty]
+        self.ball_speed_base = config["speed"]
+        self.powerup_base_chance = config["drop_chance"]
+        self.level_speed_step = config["speed_step"]
+        self.score_mult = config["score_mult"]
+
+    def start_new_game(self):
+        config = DIFFICULTY_CONFIG[self.difficulty]
+        self.starting_lives = config["lives"]
+        self.ball_speed_base = config["speed"]
+        self.powerup_base_chance = config["drop_chance"]
+        self.level_speed_step = config["speed_step"]
+        self.score_mult = config["score_mult"]
+        self.game_state = "PLAYING"
+        self.paused = False
+        self.reset_run(full_reset=True)
+
     def reset_run(self, full_reset):
         if full_reset:
             self.score = 0
-            self.lives = 3
+            self.lives = getattr(self, "starting_lives", DIFFICULTY_CONFIG[self.difficulty]["lives"])
             self.level = 1
-            self.ball_speed_base = 6.0
-            self.powerup_base_chance = 0.24
+            self.ball_speed_base = DIFFICULTY_CONFIG[self.difficulty]["speed"]
+            self.powerup_base_chance = DIFFICULTY_CONFIG[self.difficulty]["drop_chance"]
+            self.level_speed_step = DIFFICULTY_CONFIG[self.difficulty]["speed_step"]
+            self.score_mult = DIFFICULTY_CONFIG[self.difficulty]["score_mult"]
+            self.tutorial_timer = 480
 
         self.paddle = Paddle(x=WIDTH // 2 - 70, y=HEIGHT - 35, width=140, height=15, color=(255, 255, 255))
         self.default_paddle_width = 140
@@ -169,6 +207,7 @@ class Game:
         self.sticky_active = False
         self.slow_timer = 0
         self.level_flash_timer = 120
+        self.round_start_countdown = 150
 
     def create_bricks(self, level):
         layout = LEVEL_LAYOUTS[(level - 1) % len(LEVEL_LAYOUTS)]
@@ -246,6 +285,13 @@ class Game:
     def set_power_message(self, text):
         self.power_message = text
         self.power_message_timer = 140
+
+    def award_points(self, points):
+        gained = int(points * self.score_mult)
+        self.score += gained
+        if self.score > self.high_score:
+            self.high_score = self.score
+        return gained
 
     def apply_powerup(self, powerup):
         ptype = powerup.type
@@ -326,9 +372,9 @@ class Game:
             self.play_sound("brick")
             self.spawn_particles(nearest.rect.centerx, nearest.rect.centery, (255, 80, 80), count=10)
             if destroyed:
-                self.score += nearest.points
+                self.award_points(nearest.points)
                 if nearest.brick_type == "explosive":
-                    self.score += self.explode_neighbors(nearest)
+                    self.award_points(self.explode_neighbors(nearest))
                 self.spawn_powerup(nearest.rect.centerx, nearest.rect.centery)
 
     def update_particles(self):
@@ -353,7 +399,7 @@ class Game:
             self.balls[0].x = self.paddle.rect.centerx
             self.balls[0].y = self.paddle.rect.top - self.balls[0].radius
 
-        if self.ball_attached and keys[pygame.K_SPACE]:
+        if self.ball_attached and keys[pygame.K_SPACE] and self.round_start_countdown <= 0:
             self.ball_attached = False
 
         for ball in self.balls:
@@ -395,6 +441,7 @@ class Game:
             self.ball_attached = True
             self.balls = [Ball(WIDTH // 2, HEIGHT - 50, 10, (255, 70, 70), speed=self.ball_speed_base)]
             self.sticky_active = False
+            self.round_start_countdown = 120
 
     def update_brick_collisions(self):
         for ball in list(self.balls):
@@ -418,13 +465,11 @@ class Game:
                     self.combo += 1
                     self.combo_timer = 90
                     points = int(brick.points * (1 + self.combo * 0.15))
-                    self.score += points
-                    if self.score > self.high_score:
-                        self.high_score = self.score
+                    self.award_points(points)
                     self.spawn_powerup(brick.rect.centerx, brick.rect.centery)
 
                     if brick.brick_type == "explosive":
-                        self.score += self.explode_neighbors(brick)
+                        self.award_points(self.explode_neighbors(brick))
 
                     self.shake_frames = 5
                     self.shake_strength = 3
@@ -444,8 +489,16 @@ class Game:
         return all(brick.destroyed or brick.unbreakable for brick in self.bricks)
 
     def go_to_next_level(self):
+        if self.level >= CAMPAIGN_LEVELS:
+            self.game_state = "CAMPAIGN_WIN"
+            self.play_sound("win")
+            if self.score > self.high_score:
+                self.high_score = self.score
+                self.save_high_score()
+            return
+
         self.level += 1
-        self.ball_speed_base = min(10.0, self.ball_speed_base + 0.55)
+        self.ball_speed_base = min(10.0, self.ball_speed_base + self.level_speed_step)
         self.powerup_base_chance = max(0.1, self.powerup_base_chance - 0.02)
         self.reset_run(full_reset=False)
         self.play_sound("win")
@@ -458,13 +511,15 @@ class Game:
         pygame.draw.rect(surf, (16, 20, 28), (0, 0, WIDTH, HUD_HEIGHT))
         score_text = FONT.render(f"Score: {self.score}", True, (240, 240, 240))
         lives_text = FONT.render(f"Lives: {self.lives}", True, (240, 240, 240))
-        level_text = FONT.render(f"Level: {self.level}", True, (240, 240, 240))
+        level_text = FONT.render(f"Level: {self.level}/{CAMPAIGN_LEVELS}", True, (240, 240, 240))
         hi_text = SMALL_FONT.render(f"High: {self.high_score}", True, (200, 200, 200))
+        diff_text = SMALL_FONT.render(f"{self.difficulty} x{self.score_mult:.1f}", True, (180, 220, 255))
 
         surf.blit(score_text, (14, 8))
         surf.blit(lives_text, (210, 8))
         surf.blit(level_text, (360, 8))
         surf.blit(hi_text, (500, 11))
+        surf.blit(diff_text, (590, 11))
 
         if self.combo > 1:
             combo_text = FONT.render(f"Combo x{self.combo}", True, (255, 210, 80))
@@ -502,6 +557,19 @@ class Game:
             msg = FONT.render(self.power_message, True, (240, 240, 240))
             surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, HEIGHT - 68))
 
+        if self.ball_attached and self.round_start_countdown <= 0:
+            tip = SMALL_FONT.render("Press SPACE to launch", True, (230, 230, 230))
+            surf.blit(tip, (WIDTH // 2 - tip.get_width() // 2, HEIGHT - 46))
+
+        if self.round_start_countdown > 0:
+            seconds = max(1, (self.round_start_countdown + 59) // 60)
+            ready = BIG_FONT.render(str(seconds), True, (255, 255, 255))
+            surf.blit(ready, (WIDTH // 2 - ready.get_width() // 2, HEIGHT // 2 - 20))
+
+        if self.tutorial_timer > 0 and self.level == 1:
+            hint = SMALL_FONT.render("Tip: hit paddle edges to control bounce angle. F uses laser when charged.", True, (210, 210, 210))
+            surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, HEIGHT - 24))
+
         if self.level_flash_timer > 0:
             text = BIG_FONT.render(f"Level {self.level}", True, (255, 255, 255))
             alpha = min(255, self.level_flash_timer * 4)
@@ -516,13 +584,17 @@ class Game:
 
         title = BIG_FONT.render("Breakout Arcade", True, (240, 240, 240))
         subtitle = FONT.render("Press ENTER to Start", True, (200, 220, 255))
-        settings = SMALL_FONT.render("P pause | M/N volume +/- | A/D alternate movement keys", True, (180, 180, 180))
-        controls = SMALL_FONT.render("Space launch | F laser | Left/Right or A/D move", True, (180, 180, 180))
+        settings = SMALL_FONT.render("Left/Right (or A/D): move | Space: launch | F: laser | P: pause", True, (180, 180, 180))
+        controls = SMALL_FONT.render("M/N volume +/- | ESC quits from menu", True, (180, 180, 180))
         hi = FONT.render(f"High Score: {self.high_score}", True, (255, 220, 120))
+        diff = FONT.render(f"Difficulty: {self.difficulty}", True, (150, 230, 255))
+        diff_help = SMALL_FONT.render("Use UP/DOWN to change difficulty", True, (200, 200, 200))
 
         surf.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 2 - 120))
         surf.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, HEIGHT // 2 - 28))
         surf.blit(hi, (WIDTH // 2 - hi.get_width() // 2, HEIGHT // 2 + 18))
+        surf.blit(diff, (WIDTH // 2 - diff.get_width() // 2, HEIGHT // 2 + 54))
+        surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, HEIGHT // 2 + 86))
         surf.blit(settings, (WIDTH // 2 - settings.get_width() // 2, HEIGHT - 50))
         surf.blit(controls, (WIDTH // 2 - controls.get_width() // 2, HEIGHT - 74))
 
@@ -535,12 +607,23 @@ class Game:
         surf.blit(score, (WIDTH // 2 - score.get_width() // 2, HEIGHT // 2 + 6))
         surf.blit(again, (WIDTH // 2 - again.get_width() // 2, HEIGHT // 2 + 40))
 
+    def draw_campaign_win(self, surf):
+        win = BIG_FONT.render("Campaign Complete", True, (140, 255, 170))
+        score = FONT.render(f"Final Score: {self.score}", True, (240, 240, 240))
+        again = SMALL_FONT.render("Press ENTER to play again or ESC for menu", True, (220, 220, 220))
+
+        surf.blit(win, (WIDTH // 2 - win.get_width() // 2, HEIGHT // 2 - 60))
+        surf.blit(score, (WIDTH // 2 - score.get_width() // 2, HEIGHT // 2 + 6))
+        surf.blit(again, (WIDTH // 2 - again.get_width() // 2, HEIGHT // 2 + 40))
+
     def draw_paused(self, surf):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 135))
         surf.blit(overlay, (0, 0))
         txt = BIG_FONT.render("Paused", True, (255, 255, 255))
+        opts = SMALL_FONT.render("P resume | R restart run | Q menu", True, (220, 220, 220))
         surf.blit(txt, (WIDTH // 2 - txt.get_width() // 2, HEIGHT // 2 - 40))
+        surf.blit(opts, (WIDTH // 2 - opts.get_width() // 2, HEIGHT // 2 + 20))
 
     def draw_transition(self, surf):
         if self.transition_alpha <= 0:
@@ -571,20 +654,31 @@ class Game:
                 if self.game_state == "PLAYING":
                     self.game_state = "MENU"
                     self.paused = False
-                elif self.game_state in {"GAME_OVER", "MENU"}:
+                elif self.game_state in {"GAME_OVER", "CAMPAIGN_WIN"}:
+                    self.game_state = "MENU"
+                elif self.game_state == "MENU":
                     pygame.quit()
                     sys.exit()
 
+            if self.game_state == "MENU" and event.key == pygame.K_UP:
+                self.update_difficulty(-1)
+            if self.game_state == "MENU" and event.key == pygame.K_DOWN:
+                self.update_difficulty(1)
+
             if event.key == pygame.K_RETURN:
                 if self.game_state == "MENU":
-                    self.game_state = "PLAYING"
-                    self.reset_run(full_reset=True)
-                elif self.game_state == "GAME_OVER":
-                    self.game_state = "PLAYING"
-                    self.reset_run(full_reset=True)
+                    self.start_new_game()
+                elif self.game_state in {"GAME_OVER", "CAMPAIGN_WIN"}:
+                    self.start_new_game()
 
             if event.key == pygame.K_p and self.game_state == "PLAYING":
                 self.paused = not self.paused
+
+            if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_r:
+                self.start_new_game()
+            if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_q:
+                self.game_state = "MENU"
+                self.paused = False
 
             if event.key == pygame.K_m:
                 self.volume = min(1.0, self.volume + 0.1)
@@ -620,6 +714,11 @@ class Game:
             self.update_combo()
             self.update_particles()
 
+            if self.round_start_countdown > 0:
+                self.round_start_countdown -= 1
+            if self.tutorial_timer > 0:
+                self.tutorial_timer -= 1
+
             if self.slow_timer > 0:
                 self.slow_timer -= 1
                 if self.slow_timer == 0:
@@ -651,6 +750,10 @@ class Game:
             self.draw_world(world)
             self.draw_hud(world)
             self.draw_game_over(world)
+        elif self.game_state == "CAMPAIGN_WIN":
+            self.draw_world(world)
+            self.draw_hud(world)
+            self.draw_campaign_win(world)
         else:
             self.draw_world(world)
             self.draw_hud(world)
