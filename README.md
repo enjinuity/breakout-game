@@ -11,9 +11,13 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 - Powerups: extra life, bigger paddle, multiball, laser, slow-motion, sticky paddle, shield
 - Hazard drops: smaller paddle and faster ball
 - Combo scoring multiplier + high-score persistence (`high_score.json`)
+- High score now autosaves immediately when beaten
 - Menu + pause + game-over states, volume controls, alternative movement keys
+- Dedicated Settings screen (master/SFX/music levels, controls preset, fullscreen, BGM)
 - Campaign mode with a proper completion state
+- Boss waves every 3 levels (moving boss + hazard drops + boss HP bar)
 - Round start countdown + contextual control hints
+- Menu now shows BGM status with toggle and playback fallback
 - Visual polish: particles, screen shake, level intro flash, transition fade
 - Sound effects with optional looping music support (`assets/sounds/bgm.wav` if provided)
 
@@ -33,9 +37,12 @@ Requires Python 3.x and Pygame installed
 - `Space` to launch attached ball
 - `F` to fire laser (when laser charges are active)
 - `P` to pause/unpause gameplay
+- `S` open settings from menu
+- `O` open settings while paused
 - `R` while paused to restart run
 - `Q` while paused to return to menu
 - `M / N` volume up/down
+- `B` toggle background music
 - `Up / Down` in menu to change difficulty
 - `Enter` start/restart
 - `Esc` return to menu (or quit from menu)

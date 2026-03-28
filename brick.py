@@ -26,6 +26,9 @@ class Brick:
                 color = (120, 120, 120)
             elif self.brick_type == "explosive":
                 color = (255, 140, 0)
+            elif self.brick_type == "boss":
+                health_ratio = max(0.15, self.hits / max(1, self.max_hits))
+                color = (255, int(80 + 110 * health_ratio), int(80 + 90 * health_ratio))
 
             pygame.draw.rect(screen, color, self.rect)                # Fill
             pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)         # Black border

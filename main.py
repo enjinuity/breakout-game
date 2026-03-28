@@ -77,11 +77,14 @@ DIFFICULTY_CONFIG = {
 }
 
 CAMPAIGN_LEVELS = 9
+BOSS_LEVEL_INTERVAL = 3
 
 
 class Game:
     def __init__(self):
-        self.volume = 0.5
+        self.volume = 0.7
+        self.sfx_volume = 0.9
+        self.music_volume = 0.6
         self.high_score = self.load_high_score()
 
         self.left_key = pygame.K_LEFT
@@ -99,6 +102,9 @@ class Game:
         self.transition_alpha = 255
         self.transition_target = "MENU"
         self.paused = False
+        self.settings_index = 0
+        self.settings_return_state = "MENU"
+        self.fullscreen = False
 
         self.shake_frames = 0
         self.shake_strength = 0
@@ -110,7 +116,9 @@ class Game:
         self.laser_x = 0
         self.shield_active = False
         self.sticky_active = False
+        self.sticky_timer = 0
         self.slow_timer = 0
+        self.big_paddle_timer = 0
         self.power_message = ""
         self.power_message_timer = 0
 
@@ -121,6 +129,13 @@ class Game:
         self.level_flash_timer = 0
         self.round_start_countdown = 0
         self.tutorial_timer = 480
+        self.bgm_enabled = True
+        self.bgm_loaded = False
+        self.bgm_channel = None
+        self.bgm_error = ""
+        self.boss_brick = None
+        self.boss_direction = 1
+        self.boss_attack_timer = 0
 
         self.reset_run(full_reset=True)
         self.apply_volume()
@@ -149,18 +164,36 @@ class Game:
             sound.play()
 
     def apply_volume(self):
+        sfx_mix = self.volume * self.sfx_volume
         for sound in SOUNDS.values():
             if sound:
-                sound.set_volume(self.volume)
-        pygame.mixer.music.set_volume(self.volume * 0.35)
+                sound.set_volume(sfx_mix)
+        bgm_volume = self.volume * self.music_volume if self.bgm_enabled else 0.0
+        pygame.mixer.music.set_volume(bgm_volume)
+        if self.bgm_channel:
+            self.bgm_channel.set_volume(bgm_volume)
 
     def try_start_music(self):
         if os.path.exists(MUSIC_PATH):
             try:
+                pygame.mixer.music.stop()
                 pygame.mixer.music.load(MUSIC_PATH)
                 pygame.mixer.music.play(-1)
+                self.bgm_loaded = True
+                self.bgm_error = ""
             except pygame.error:
-                return
+                # Fallback for environments/codecs where music stream load fails.
+                bgm_sound = load_sound(MUSIC_PATH)
+                if bgm_sound:
+                    self.bgm_channel = bgm_sound.play(-1)
+                    self.bgm_loaded = self.bgm_channel is not None
+                    self.bgm_error = "" if self.bgm_loaded else "BGM channel unavailable"
+                else:
+                    self.bgm_loaded = False
+                    self.bgm_error = "BGM format unsupported"
+        else:
+            self.bgm_loaded = False
+            self.bgm_error = "bgm.wav not found"
 
     def update_difficulty(self, direction):
         self.difficulty_index = (self.difficulty_index + direction) % len(self.difficulty_order)
@@ -170,6 +203,35 @@ class Game:
         self.powerup_base_chance = config["drop_chance"]
         self.level_speed_step = config["speed_step"]
         self.score_mult = config["score_mult"]
+
+    def toggle_bgm(self):
+        self.bgm_enabled = not self.bgm_enabled
+        self.apply_volume()
+
+    def toggle_controls_preset(self):
+        if self.left_key == pygame.K_LEFT:
+            self.left_key = pygame.K_a
+            self.right_key = pygame.K_d
+        else:
+            self.left_key = pygame.K_LEFT
+            self.right_key = pygame.K_RIGHT
+
+    def controls_label(self):
+        return "ARROWS" if self.left_key == pygame.K_LEFT else "WASD"
+
+    def toggle_fullscreen(self):
+        global SCREEN
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+        else:
+            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
+        pygame.display.set_caption("Breakout: Arcade Edition")
+
+    def open_settings(self, return_state):
+        self.settings_return_state = return_state
+        self.settings_index = 0
+        self.game_state = "SETTINGS"
 
     def start_new_game(self):
         config = DIFFICULTY_CONFIG[self.difficulty]
@@ -205,11 +267,52 @@ class Game:
         self.laser_charges = 0
         self.shield_active = False
         self.sticky_active = False
+        self.sticky_timer = 0
+        self.big_paddle_timer = 0
         self.slow_timer = 0
         self.level_flash_timer = 120
         self.round_start_countdown = 150
+        self.boss_brick = None
+        self.boss_direction = 1
+        self.boss_attack_timer = max(120, 300 - self.level * 10)
+
+    def is_boss_level(self, level):
+        return level % BOSS_LEVEL_INTERVAL == 0
+
+    def create_boss_wave(self, level):
+        bricks = []
+        boss_hits = 16 + level * 2
+        boss_width = 260
+        boss_height = 38
+        boss_x = WIDTH // 2 - boss_width // 2
+        boss_y = HUD_HEIGHT + 34
+        self.boss_brick = Brick(
+            boss_x,
+            boss_y,
+            boss_width,
+            boss_height,
+            (255, 110, 110),
+            points=1500 + level * 120,
+            hits=boss_hits,
+            brick_type="boss",
+        )
+        bricks.append(self.boss_brick)
+
+        # Guards to keep boss waves from being one-hit trivial.
+        guard_w = 72
+        guard_h = 24
+        left_start = WIDTH // 2 - 260
+        right_start = WIDTH // 2 + 188
+        for i in range(3):
+            y = HUD_HEIGHT + 96 + i * 30
+            bricks.append(Brick(left_start, y, guard_w, guard_h, (90, 200, 240), points=110, hits=2, brick_type="strong"))
+            bricks.append(Brick(right_start, y, guard_w, guard_h, (90, 200, 240), points=110, hits=2, brick_type="strong"))
+        return bricks
 
     def create_bricks(self, level):
+        if self.is_boss_level(level):
+            return self.create_boss_wave(level)
+
         layout = LEVEL_LAYOUTS[(level - 1) % len(LEVEL_LAYOUTS)]
         bricks = []
         rows = len(layout)
@@ -240,7 +343,17 @@ class Game:
                     bricks.append(Brick(x, y, brick_w - 2, brick_h - 2, (255, 150, 60), points=80, hits=1, brick_type="explosive"))
         return bricks
 
+    def spawn_specific_powerup(self, x, y, power_type):
+        self.powerups.append(PowerUp(x, y, 26, 20, power_type))
+
     def spawn_powerup(self, x, y):
+        if self.is_boss_level(self.level):
+            # Boss waves are tighter; fewer freebies and more pressure.
+            if random.random() > 0.12:
+                return
+            boss_pool = ["laser", "slow", "shield", "small", "fast"]
+            self.spawn_specific_powerup(x, y, random.choice(boss_pool))
+            return
         level_penalty = (self.level - 1) * 0.03
         chance = max(0.12, self.powerup_base_chance - level_penalty)
         if random.random() > chance:
@@ -291,6 +404,7 @@ class Game:
         self.score += gained
         if self.score > self.high_score:
             self.high_score = self.score
+            self.save_high_score()
         return gained
 
     def apply_powerup(self, powerup):
@@ -310,10 +424,11 @@ class Game:
             center = self.paddle.rect.centerx
             self.paddle.rect.width = new_width
             self.paddle.rect.centerx = center
+            self.big_paddle_timer = 900
             self.set_power_message("Paddle size up")
 
         elif ptype == "life":
-            self.lives += 1
+            self.lives = min(9, self.lives + 1)
             self.set_power_message("Extra life")
 
         elif ptype == "laser":
@@ -328,6 +443,7 @@ class Game:
 
         elif ptype == "sticky":
             self.sticky_active = True
+            self.sticky_timer = 900
             self.set_power_message("Sticky paddle")
 
         elif ptype == "shield":
@@ -339,6 +455,7 @@ class Game:
             center = self.paddle.rect.centerx
             self.paddle.rect.width = new_width
             self.paddle.rect.centerx = center
+            self.big_paddle_timer = 0
             self.set_power_message("Hazard: paddle shrunk")
 
         elif ptype == "fast":
@@ -387,6 +504,26 @@ class Game:
             if p["life"] > 0:
                 next_particles.append(p)
         self.particles = next_particles
+
+    def update_boss_mechanics(self):
+        if not self.boss_brick or self.boss_brick.destroyed:
+            return
+
+        # Move the boss horizontally to make this feel like a wave event.
+        speed = 2 + self.level // 3
+        self.boss_brick.rect.x += speed * self.boss_direction
+        min_x = 80
+        max_x = WIDTH - 80 - self.boss_brick.rect.width
+        if self.boss_brick.rect.x <= min_x or self.boss_brick.rect.x >= max_x:
+            self.boss_direction *= -1
+            self.boss_brick.rect.x = max(min_x, min(self.boss_brick.rect.x, max_x))
+
+        # Boss periodically launches hazard drops.
+        self.boss_attack_timer -= 1
+        if self.boss_attack_timer <= 0:
+            hazard = random.choice(["small", "fast"])
+            self.spawn_specific_powerup(self.boss_brick.rect.centerx, self.boss_brick.rect.bottom + 4, hazard)
+            self.boss_attack_timer = max(90, 270 - self.level * 8)
 
     def update_combo(self):
         if self.combo_timer > 0:
@@ -470,9 +607,14 @@ class Game:
 
                     if brick.brick_type == "explosive":
                         self.award_points(self.explode_neighbors(brick))
-
-                    self.shake_frames = 5
-                    self.shake_strength = 3
+                    elif brick.brick_type == "boss":
+                        self.set_power_message("Boss destroyed")
+                        self.shake_frames = 18
+                        self.shake_strength = 6
+                        self.boss_brick = None
+                    else:
+                        self.shake_frames = 5
+                        self.shake_strength = 3
                 break
 
     def update_powerups(self):
@@ -501,6 +643,8 @@ class Game:
         self.ball_speed_base = min(10.0, self.ball_speed_base + self.level_speed_step)
         self.powerup_base_chance = max(0.1, self.powerup_base_chance - 0.02)
         self.reset_run(full_reset=False)
+        if self.is_boss_level(self.level):
+            self.set_power_message("Boss wave incoming")
         self.play_sound("win")
 
     def draw_particles(self, surf):
@@ -528,6 +672,15 @@ class Game:
         if self.laser_charges > 0:
             laser_text = SMALL_FONT.render(f"Laser: {self.laser_charges}", True, (255, 120, 120))
             surf.blit(laser_text, (760, 11))
+        if self.sticky_timer > 0:
+            st = SMALL_FONT.render(f"Sticky: {self.sticky_timer // 60}s", True, (220, 170, 255))
+            surf.blit(st, (14, HEIGHT - 24))
+        if self.big_paddle_timer > 0:
+            bp = SMALL_FONT.render(f"Big Paddle: {self.big_paddle_timer // 60}s", True, (160, 220, 255))
+            surf.blit(bp, (170, HEIGHT - 24))
+        if self.is_boss_level(self.level) and self.boss_brick and not self.boss_brick.destroyed:
+            boss_tag = SMALL_FONT.render("BOSS WAVE", True, (255, 130, 130))
+            surf.blit(boss_tag, (WIDTH - 124, HEIGHT - 24))
 
     def draw_world(self, surf):
         # Layered background with motion for atmosphere.
@@ -550,6 +703,11 @@ class Game:
         self.paddle.draw(surf)
         for ball in self.balls:
             ball.draw(surf)
+
+        if self.ball_attached and self.balls and self.round_start_countdown <= 0:
+            ball = self.balls[0]
+            aim_end = (int(ball.x + ball.dx * 12), int(ball.y + ball.dy * 12))
+            pygame.draw.line(surf, (160, 200, 255), (int(ball.x), int(ball.y)), aim_end, 2)
 
         self.draw_particles(surf)
 
@@ -578,23 +736,43 @@ class Game:
             overlay.set_alpha(alpha)
             surf.blit(overlay, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - 30))
 
+        if self.boss_brick and not self.boss_brick.destroyed:
+            max_w = 340
+            bar_x = WIDTH // 2 - max_w // 2
+            bar_y = HUD_HEIGHT + 8
+            ratio = self.boss_brick.hits / max(1, self.boss_brick.max_hits)
+            pygame.draw.rect(surf, (30, 30, 30), (bar_x, bar_y, max_w, 14))
+            pygame.draw.rect(surf, (255, 90, 90), (bar_x + 2, bar_y + 2, int((max_w - 4) * ratio), 10))
+            pygame.draw.rect(surf, (220, 220, 220), (bar_x, bar_y, max_w, 14), 2)
+            label = SMALL_FONT.render("BOSS", True, (255, 220, 220))
+            surf.blit(label, (bar_x - 50, bar_y - 2))
+
     def draw_menu(self, surf):
         for i in range(0, HEIGHT, 20):
             pygame.draw.rect(surf, (12 + i // 30, 14 + i // 30, 22 + i // 18), (0, i, WIDTH, 20))
 
         title = BIG_FONT.render("Breakout Arcade", True, (240, 240, 240))
-        subtitle = FONT.render("Press ENTER to Start", True, (200, 220, 255))
+        subtitle = FONT.render("Press ENTER to Start | S for Settings", True, (200, 220, 255))
         settings = SMALL_FONT.render("Left/Right (or A/D): move | Space: launch | F: laser | P: pause", True, (180, 180, 180))
-        controls = SMALL_FONT.render("M/N volume +/- | ESC quits from menu", True, (180, 180, 180))
+        controls = SMALL_FONT.render("M/N master volume | B BGM toggle | ESC quits", True, (180, 180, 180))
         hi = FONT.render(f"High Score: {self.high_score}", True, (255, 220, 120))
         diff = FONT.render(f"Difficulty: {self.difficulty}", True, (150, 230, 255))
         diff_help = SMALL_FONT.render("Use UP/DOWN to change difficulty", True, (200, 200, 200))
+        bgm_state = "ON" if self.bgm_enabled and self.bgm_loaded else "OFF"
+        bgm = SMALL_FONT.render(f"BGM: {bgm_state} (B to toggle)", True, (190, 220, 190))
+        if self.bgm_error:
+            bgm_note = SMALL_FONT.render(f"BGM note: {self.bgm_error}", True, (220, 160, 160))
+        else:
+            bgm_note = None
 
         surf.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 2 - 120))
         surf.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, HEIGHT // 2 - 28))
         surf.blit(hi, (WIDTH // 2 - hi.get_width() // 2, HEIGHT // 2 + 18))
         surf.blit(diff, (WIDTH // 2 - diff.get_width() // 2, HEIGHT // 2 + 54))
         surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, HEIGHT // 2 + 86))
+        surf.blit(bgm, (WIDTH // 2 - bgm.get_width() // 2, HEIGHT // 2 + 114))
+        if bgm_note:
+            surf.blit(bgm_note, (WIDTH // 2 - bgm_note.get_width() // 2, HEIGHT // 2 + 138))
         surf.blit(settings, (WIDTH // 2 - settings.get_width() // 2, HEIGHT - 50))
         surf.blit(controls, (WIDTH // 2 - controls.get_width() // 2, HEIGHT - 74))
 
@@ -621,9 +799,36 @@ class Game:
         overlay.fill((0, 0, 0, 135))
         surf.blit(overlay, (0, 0))
         txt = BIG_FONT.render("Paused", True, (255, 255, 255))
-        opts = SMALL_FONT.render("P resume | R restart run | Q menu", True, (220, 220, 220))
+        opts = SMALL_FONT.render("P resume | O settings | R restart run | Q menu", True, (220, 220, 220))
         surf.blit(txt, (WIDTH // 2 - txt.get_width() // 2, HEIGHT // 2 - 40))
         surf.blit(opts, (WIDTH // 2 - opts.get_width() // 2, HEIGHT // 2 + 20))
+
+    def draw_settings(self, surf):
+        for i in range(0, HEIGHT, 24):
+            pygame.draw.rect(surf, (10 + i // 28, 12 + i // 34, 20 + i // 24), (0, i, WIDTH, 24))
+
+        title = BIG_FONT.render("Settings", True, (240, 240, 240))
+        hint = SMALL_FONT.render("UP/DOWN select | LEFT/RIGHT adjust | ENTER toggle/select | ESC back", True, (200, 200, 200))
+        surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 80))
+        surf.blit(hint, (WIDTH // 2 - hint.get_width() // 2, 148))
+
+        items = [
+            ("Master Volume", f"{int(self.volume * 100)}%"),
+            ("SFX Volume", f"{int(self.sfx_volume * 100)}%"),
+            ("Music Volume", f"{int(self.music_volume * 100)}%"),
+            ("Background Music", "ON" if self.bgm_enabled else "OFF"),
+            ("Controls", self.controls_label()),
+            ("Fullscreen", "ON" if self.fullscreen else "OFF"),
+            ("Back", "Return"),
+        ]
+
+        y = 210
+        for idx, (label, value) in enumerate(items):
+            selected = idx == self.settings_index
+            color = (255, 230, 140) if selected else (230, 230, 230)
+            line = FONT.render(f"{label}: {value}", True, color)
+            surf.blit(line, (WIDTH // 2 - line.get_width() // 2, y))
+            y += 46
 
     def draw_transition(self, surf):
         if self.transition_alpha <= 0:
@@ -644,10 +849,48 @@ class Game:
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                self.save_high_score()
                 pygame.quit()
                 sys.exit()
 
             if event.type != pygame.KEYDOWN:
+                continue
+
+            if self.game_state == "SETTINGS":
+                if event.key == pygame.K_ESCAPE:
+                    self.game_state = self.settings_return_state
+                    continue
+
+                if event.key == pygame.K_UP:
+                    self.settings_index = (self.settings_index - 1) % 7
+                elif event.key == pygame.K_DOWN:
+                    self.settings_index = (self.settings_index + 1) % 7
+                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    direction = -1 if event.key == pygame.K_LEFT else 1
+                    if self.settings_index == 0:
+                        self.volume = max(0.0, min(1.0, self.volume + direction * 0.05))
+                        self.apply_volume()
+                    elif self.settings_index == 1:
+                        self.sfx_volume = max(0.0, min(1.0, self.sfx_volume + direction * 0.05))
+                        self.apply_volume()
+                    elif self.settings_index == 2:
+                        self.music_volume = max(0.0, min(1.0, self.music_volume + direction * 0.05))
+                        self.apply_volume()
+                    elif self.settings_index == 3:
+                        self.toggle_bgm()
+                    elif self.settings_index == 4:
+                        self.toggle_controls_preset()
+                    elif self.settings_index == 5:
+                        self.toggle_fullscreen()
+                elif event.key == pygame.K_RETURN:
+                    if self.settings_index == 3:
+                        self.toggle_bgm()
+                    elif self.settings_index == 4:
+                        self.toggle_controls_preset()
+                    elif self.settings_index == 5:
+                        self.toggle_fullscreen()
+                    elif self.settings_index == 6:
+                        self.game_state = self.settings_return_state
                 continue
 
             if event.key == pygame.K_ESCAPE:
@@ -657,6 +900,7 @@ class Game:
                 elif self.game_state in {"GAME_OVER", "CAMPAIGN_WIN"}:
                     self.game_state = "MENU"
                 elif self.game_state == "MENU":
+                    self.save_high_score()
                     pygame.quit()
                     sys.exit()
 
@@ -664,6 +908,8 @@ class Game:
                 self.update_difficulty(-1)
             if self.game_state == "MENU" and event.key == pygame.K_DOWN:
                 self.update_difficulty(1)
+            if self.game_state == "MENU" and event.key == pygame.K_s:
+                self.open_settings("MENU")
 
             if event.key == pygame.K_RETURN:
                 if self.game_state == "MENU":
@@ -679,6 +925,8 @@ class Game:
             if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_q:
                 self.game_state = "MENU"
                 self.paused = False
+            if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_o:
+                self.open_settings("PLAYING")
 
             if event.key == pygame.K_m:
                 self.volume = min(1.0, self.volume + 0.1)
@@ -686,13 +934,8 @@ class Game:
             if event.key == pygame.K_n:
                 self.volume = max(0.0, self.volume - 0.1)
                 self.apply_volume()
-
-            if event.key == pygame.K_a:
-                self.left_key = pygame.K_a
-                self.right_key = pygame.K_d
-            if event.key == pygame.K_LEFT:
-                self.left_key = pygame.K_LEFT
-                self.right_key = pygame.K_RIGHT
+            if event.key == pygame.K_b:
+                self.toggle_bgm()
 
             if event.key == pygame.K_f and self.game_state == "PLAYING" and not self.paused:
                 self.fire_laser()
@@ -709,6 +952,7 @@ class Game:
                 self.paddle.rect.x += self.paddle.speed
 
             self.update_balls(keys)
+            self.update_boss_mechanics()
             self.update_brick_collisions()
             self.update_powerups()
             self.update_combo()
@@ -718,6 +962,17 @@ class Game:
                 self.round_start_countdown -= 1
             if self.tutorial_timer > 0:
                 self.tutorial_timer -= 1
+            if self.sticky_timer > 0:
+                self.sticky_timer -= 1
+                if self.sticky_timer == 0:
+                    self.sticky_active = False
+            if self.big_paddle_timer > 0:
+                self.big_paddle_timer -= 1
+                if self.big_paddle_timer == 0:
+                    center = self.paddle.rect.centerx
+                    self.paddle.rect.width = self.default_paddle_width
+                    self.paddle.rect.centerx = center
+                    self.paddle.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
 
             if self.slow_timer > 0:
                 self.slow_timer -= 1
@@ -746,6 +1001,8 @@ class Game:
 
         if self.game_state == "MENU":
             self.draw_menu(world)
+        elif self.game_state == "SETTINGS":
+            self.draw_settings(world)
         elif self.game_state == "GAME_OVER":
             self.draw_world(world)
             self.draw_hud(world)
