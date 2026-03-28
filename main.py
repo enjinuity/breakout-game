@@ -3,6 +3,7 @@ import math
 import os
 import random
 import sys
+from datetime import date
 
 import pygame
 
@@ -79,6 +80,8 @@ DIFFICULTY_CONFIG = {
 
 CAMPAIGN_LEVELS = 9
 BOSS_LEVEL_INTERVAL = 3
+DAILY_BOSS_INTERVAL = 4
+GAME_MODES = ["CAMPAIGN", "DAILY"]
 
 
 class Game:
@@ -94,6 +97,8 @@ class Game:
         self.difficulty_order = ["EASY", "NORMAL", "HARD"]
         self.difficulty_index = 1
         self.difficulty = self.difficulty_order[self.difficulty_index]
+        self.mode_index = 0
+        self.game_mode = GAME_MODES[self.mode_index]
         self.ball_speed_base = DIFFICULTY_CONFIG[self.difficulty]["speed"]
         self.powerup_base_chance = DIFFICULTY_CONFIG[self.difficulty]["drop_chance"]
         self.level_speed_step = DIFFICULTY_CONFIG[self.difficulty]["speed_step"]
@@ -140,6 +145,8 @@ class Game:
         self.boss_projectiles = []
         self.boss_pattern_index = 0
         self.run_active = False
+        self.daily_seed = 0
+        self.daily_label = ""
 
         self.profile = self.load_profile()
         self.apply_profile_settings()
@@ -167,6 +174,9 @@ class Game:
                 "runs_started": 0,
                 "runs_completed": 0,
                 "campaign_wins": 0,
+                "daily_runs": 0,
+                "daily_best_score": 0,
+                "daily_best_date": "",
                 "bosses_defeated": 0,
                 "bricks_broken": 0,
                 "best_level_reached": 1,
@@ -288,6 +298,15 @@ class Game:
         self.level_speed_step = config["speed_step"]
         self.score_mult = config["score_mult"]
 
+    def update_mode(self, direction):
+        self.mode_index = (self.mode_index + direction) % len(GAME_MODES)
+        self.game_mode = GAME_MODES[self.mode_index]
+
+    def daily_seed_for_today(self):
+        today = date.today().isoformat()
+        self.daily_label = today
+        return sum(ord(ch) for ch in today)
+
     def toggle_bgm(self):
         self.bgm_enabled = not self.bgm_enabled
         self.apply_volume()
@@ -327,6 +346,11 @@ class Game:
         stats["runs_completed"] = int(stats.get("runs_completed", 0)) + 1
         stats["lifetime_score"] = int(stats.get("lifetime_score", 0)) + int(self.score)
         stats["best_level_reached"] = max(int(stats.get("best_level_reached", 1)), int(self.level))
+        if self.game_mode == "DAILY":
+            best = int(stats.get("daily_best_score", 0))
+            if self.score > best:
+                stats["daily_best_score"] = int(self.score)
+                stats["daily_best_date"] = self.daily_label or date.today().isoformat()
         self.run_active = False
         self.save_profile()
 
@@ -343,6 +367,12 @@ class Game:
         self.paused = False
         self.run_active = True
         self.profile["stats"]["runs_started"] = int(self.profile["stats"].get("runs_started", 0)) + 1
+        if self.game_mode == "DAILY":
+            self.profile["stats"]["daily_runs"] = int(self.profile["stats"].get("daily_runs", 0)) + 1
+            self.daily_seed = self.daily_seed_for_today()
+        else:
+            self.daily_seed = 0
+            self.daily_label = ""
         self.save_profile()
         self.reset_run(full_reset=True)
 
@@ -381,7 +411,8 @@ class Game:
         self.boss_pattern_index = 0
 
     def is_boss_level(self, level):
-        return level % BOSS_LEVEL_INTERVAL == 0
+        interval = DAILY_BOSS_INTERVAL if self.game_mode == "DAILY" else BOSS_LEVEL_INTERVAL
+        return level % interval == 0
 
     def create_boss_wave(self, level):
         bricks = []
@@ -413,11 +444,36 @@ class Game:
             bricks.append(Brick(right_start, y, guard_w, guard_h, (90, 200, 240), points=110, hits=2, brick_type="strong"))
         return bricks
 
+    def create_daily_layout(self, level):
+        rng = random.Random(self.daily_seed + level * 7919)
+        rows = 6
+        cols = 10
+        layout = []
+        for row in range(rows):
+            row_chars = []
+            for _ in range(cols):
+                roll = rng.random()
+                if roll < 0.10:
+                    row_chars.append(".")
+                elif roll < 0.63:
+                    row_chars.append("N")
+                elif roll < 0.83:
+                    row_chars.append("S")
+                elif roll < 0.92:
+                    row_chars.append("E")
+                else:
+                    row_chars.append("U")
+            layout.append("".join(row_chars))
+        return layout
+
     def create_bricks(self, level):
         if self.is_boss_level(level):
             return self.create_boss_wave(level)
 
-        layout = LEVEL_LAYOUTS[(level - 1) % len(LEVEL_LAYOUTS)]
+        if self.game_mode == "DAILY":
+            layout = self.create_daily_layout(level)
+        else:
+            layout = LEVEL_LAYOUTS[(level - 1) % len(LEVEL_LAYOUTS)]
         bricks = []
         rows = len(layout)
         cols = len(layout[0])
@@ -809,7 +865,7 @@ class Game:
         return all(brick.destroyed or brick.unbreakable for brick in self.bricks)
 
     def go_to_next_level(self):
-        if self.level >= CAMPAIGN_LEVELS:
+        if self.game_mode == "CAMPAIGN" and self.level >= CAMPAIGN_LEVELS:
             self.game_state = "CAMPAIGN_WIN"
             self.play_sound("win")
             if self.score > self.high_score:
@@ -839,9 +895,12 @@ class Game:
         pygame.draw.rect(surf, (16, 20, 28), (0, 0, WIDTH, HUD_HEIGHT))
         score_text = FONT.render(f"Score: {self.score}", True, (240, 240, 240))
         lives_text = FONT.render(f"Lives: {self.lives}", True, (240, 240, 240))
-        level_text = FONT.render(f"Level: {self.level}/{CAMPAIGN_LEVELS}", True, (240, 240, 240))
+        if self.game_mode == "CAMPAIGN":
+            level_text = FONT.render(f"Level: {self.level}/{CAMPAIGN_LEVELS}", True, (240, 240, 240))
+        else:
+            level_text = FONT.render(f"Wave: {self.level}  Seed: {self.daily_label}", True, (240, 240, 240))
         hi_text = SMALL_FONT.render(f"High: {self.high_score}", True, (200, 200, 200))
-        diff_text = SMALL_FONT.render(f"{self.difficulty} x{self.score_mult:.1f}", True, (180, 220, 255))
+        diff_text = SMALL_FONT.render(f"{self.game_mode} | {self.difficulty} x{self.score_mult:.1f}", True, (180, 220, 255))
 
         surf.blit(score_text, (14, 8))
         surf.blit(lives_text, (210, 8))
@@ -945,7 +1004,9 @@ class Game:
         controls = SMALL_FONT.render("M/N master volume | B BGM toggle | ESC quits", True, (180, 180, 180))
         hi = FONT.render(f"High Score: {self.high_score}", True, (255, 220, 120))
         diff = FONT.render(f"Difficulty: {self.difficulty}", True, (150, 230, 255))
+        mode = FONT.render(f"Mode: {self.game_mode}", True, (150, 255, 210))
         diff_help = SMALL_FONT.render("Use UP/DOWN to change difficulty", True, (200, 200, 200))
+        mode_help = SMALL_FONT.render("Use LEFT/RIGHT to change mode", True, (200, 200, 200))
         bgm_state = "ON" if self.bgm_enabled and self.bgm_loaded else "OFF"
         bgm = SMALL_FONT.render(f"BGM: {bgm_state} (B to toggle)", True, (190, 220, 190))
         stats = self.profile.get("stats", {})
@@ -953,6 +1014,11 @@ class Game:
             f"Runs: {stats.get('runs_completed', 0)}  Wins: {stats.get('campaign_wins', 0)}  Bosses: {stats.get('bosses_defeated', 0)}",
             True,
             (190, 190, 220),
+        )
+        daily_line = SMALL_FONT.render(
+            f"Daily Best: {stats.get('daily_best_score', 0)} ({stats.get('daily_best_date', 'n/a')})",
+            True,
+            (170, 220, 255),
         )
         if self.bgm_error:
             bgm_note = SMALL_FONT.render(f"BGM note: {self.bgm_error}", True, (220, 160, 160))
@@ -963,11 +1029,14 @@ class Game:
         surf.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, HEIGHT // 2 - 28))
         surf.blit(hi, (WIDTH // 2 - hi.get_width() // 2, HEIGHT // 2 + 18))
         surf.blit(diff, (WIDTH // 2 - diff.get_width() // 2, HEIGHT // 2 + 54))
-        surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, HEIGHT // 2 + 86))
-        surf.blit(bgm, (WIDTH // 2 - bgm.get_width() // 2, HEIGHT // 2 + 114))
-        surf.blit(stats_line, (WIDTH // 2 - stats_line.get_width() // 2, HEIGHT // 2 + 164))
+        surf.blit(mode, (WIDTH // 2 - mode.get_width() // 2, HEIGHT // 2 + 84))
+        surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, HEIGHT // 2 + 114))
+        surf.blit(mode_help, (WIDTH // 2 - mode_help.get_width() // 2, HEIGHT // 2 + 138))
+        surf.blit(bgm, (WIDTH // 2 - bgm.get_width() // 2, HEIGHT // 2 + 162))
+        surf.blit(stats_line, (WIDTH // 2 - stats_line.get_width() // 2, HEIGHT // 2 + 192))
+        surf.blit(daily_line, (WIDTH // 2 - daily_line.get_width() // 2, HEIGHT // 2 + 216))
         if bgm_note:
-            surf.blit(bgm_note, (WIDTH // 2 - bgm_note.get_width() // 2, HEIGHT // 2 + 138))
+            surf.blit(bgm_note, (WIDTH // 2 - bgm_note.get_width() // 2, HEIGHT // 2 + 246))
         surf.blit(settings, (WIDTH // 2 - settings.get_width() // 2, HEIGHT - 50))
         surf.blit(controls, (WIDTH // 2 - controls.get_width() // 2, HEIGHT - 74))
 
@@ -1108,6 +1177,10 @@ class Game:
                 self.update_difficulty(-1)
             if self.game_state == "MENU" and event.key == pygame.K_DOWN:
                 self.update_difficulty(1)
+            if self.game_state == "MENU" and event.key == pygame.K_LEFT:
+                self.update_mode(-1)
+            if self.game_state == "MENU" and event.key == pygame.K_RIGHT:
+                self.update_mode(1)
             if self.game_state == "MENU" and event.key == pygame.K_s:
                 self.open_settings("MENU")
 

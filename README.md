@@ -15,6 +15,7 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 - Menu + pause + game-over states, volume controls, alternative movement keys
 - Dedicated Settings screen (master/SFX/music levels, controls preset, fullscreen, BGM)
 - Campaign mode with a proper completion state
+- Daily Challenge mode with seeded layouts (same seed for the day)
 - Boss waves every 3 levels (moving boss + hazard drops + boss HP bar)
 - Boss attack patterns (spread shots, rain shots, pressure phase)
 - Round start countdown + contextual control hints
@@ -46,6 +47,7 @@ Requires Python 3.x and Pygame installed
 - `M / N` volume up/down
 - `B` toggle background music
 - `Up / Down` in menu to change difficulty
+- `Left / Right` in menu to change mode (Campaign / Daily)
 - `Enter` start/restart
 - `Esc` return to menu (or quit from menu)
 
