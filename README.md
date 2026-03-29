@@ -23,6 +23,7 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 - Visual polish: particles, screen shake, level intro flash, transition fade
 - Sound effects with optional looping music support (`assets/sounds/bgm.wav` if provided)
 - Persistent player profile (`player_profile.json`): settings + lifetime stats
+- Responsive rendering with resize/fullscreen scaling and letterboxing
 
 ## 🚀 How to Run
 1. Install pygame:

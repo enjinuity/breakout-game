@@ -16,8 +16,8 @@ pygame.init()
 pygame.mixer.init()
 
 WIDTH, HEIGHT = 900, 640
-HUD_HEIGHT = 40
-SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
+HUD_HEIGHT = 64
+SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Breakout: Arcade Edition")
 CLOCK = pygame.time.Clock()
 
@@ -152,7 +152,8 @@ class Game:
         self.apply_profile_settings()
         if self.fullscreen:
             global SCREEN
-            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+            info = pygame.display.Info()
+            SCREEN = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
             pygame.display.set_caption("Breakout: Arcade Edition")
 
         self.reset_run(full_reset=True)
@@ -328,9 +329,10 @@ class Game:
         global SCREEN
         self.fullscreen = not self.fullscreen
         if self.fullscreen:
-            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.FULLSCREEN)
+            info = pygame.display.Info()
+            SCREEN = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
         else:
-            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
+            SCREEN = pygame.display.set_mode((WIDTH, HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption("Breakout: Arcade Edition")
         self.save_profile()
 
@@ -902,19 +904,19 @@ class Game:
         hi_text = SMALL_FONT.render(f"High: {self.high_score}", True, (200, 200, 200))
         diff_text = SMALL_FONT.render(f"{self.game_mode} | {self.difficulty} x{self.score_mult:.1f}", True, (180, 220, 255))
 
-        surf.blit(score_text, (14, 8))
-        surf.blit(lives_text, (210, 8))
-        surf.blit(level_text, (360, 8))
-        surf.blit(hi_text, (500, 11))
-        surf.blit(diff_text, (590, 11))
+        surf.blit(score_text, (14, 6))
+        surf.blit(lives_text, (180, 6))
+        surf.blit(level_text, (330, 6))
+        surf.blit(hi_text, (14, 38))
+        surf.blit(diff_text, (180, 38))
 
         if self.combo > 1:
             combo_text = FONT.render(f"Combo x{self.combo}", True, (255, 210, 80))
-            surf.blit(combo_text, (620, 8))
+            surf.blit(combo_text, (470, 32))
 
         if self.laser_charges > 0:
             laser_text = SMALL_FONT.render(f"Laser: {self.laser_charges}", True, (255, 120, 120))
-            surf.blit(laser_text, (760, 11))
+            surf.blit(laser_text, (WIDTH - 130, 38))
         if self.sticky_timer > 0:
             st = SMALL_FONT.render(f"Sticky: {self.sticky_timer // 60}s", True, (220, 170, 255))
             surf.blit(st, (14, HEIGHT - 24))
@@ -923,7 +925,7 @@ class Game:
             surf.blit(bp, (170, HEIGHT - 24))
         if self.is_boss_level(self.level) and self.boss_brick and not self.boss_brick.destroyed:
             boss_tag = SMALL_FONT.render("BOSS WAVE", True, (255, 130, 130))
-            surf.blit(boss_tag, (WIDTH - 124, HEIGHT - 24))
+            surf.blit(boss_tag, (WIDTH - 122, 6))
 
     def draw_world(self, surf):
         # Layered background with motion for atmosphere.
@@ -1025,20 +1027,20 @@ class Game:
         else:
             bgm_note = None
 
-        surf.blit(title, (WIDTH // 2 - title.get_width() // 2, HEIGHT // 2 - 120))
-        surf.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, HEIGHT // 2 - 28))
-        surf.blit(hi, (WIDTH // 2 - hi.get_width() // 2, HEIGHT // 2 + 18))
-        surf.blit(diff, (WIDTH // 2 - diff.get_width() // 2, HEIGHT // 2 + 54))
-        surf.blit(mode, (WIDTH // 2 - mode.get_width() // 2, HEIGHT // 2 + 84))
-        surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, HEIGHT // 2 + 114))
-        surf.blit(mode_help, (WIDTH // 2 - mode_help.get_width() // 2, HEIGHT // 2 + 138))
-        surf.blit(bgm, (WIDTH // 2 - bgm.get_width() // 2, HEIGHT // 2 + 162))
-        surf.blit(stats_line, (WIDTH // 2 - stats_line.get_width() // 2, HEIGHT // 2 + 192))
-        surf.blit(daily_line, (WIDTH // 2 - daily_line.get_width() // 2, HEIGHT // 2 + 216))
+        surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
+        surf.blit(subtitle, (WIDTH // 2 - subtitle.get_width() // 2, 140))
+        surf.blit(hi, (WIDTH // 2 - hi.get_width() // 2, 188))
+        surf.blit(mode, (WIDTH // 2 - mode.get_width() // 2, 234))
+        surf.blit(diff, (WIDTH // 2 - diff.get_width() // 2, 272))
+        surf.blit(mode_help, (WIDTH // 2 - mode_help.get_width() // 2, 316))
+        surf.blit(diff_help, (WIDTH // 2 - diff_help.get_width() // 2, 340))
+        surf.blit(bgm, (WIDTH // 2 - bgm.get_width() // 2, 368))
+        surf.blit(stats_line, (WIDTH // 2 - stats_line.get_width() // 2, 402))
+        surf.blit(daily_line, (WIDTH // 2 - daily_line.get_width() // 2, 426))
         if bgm_note:
-            surf.blit(bgm_note, (WIDTH // 2 - bgm_note.get_width() // 2, HEIGHT // 2 + 246))
-        surf.blit(settings, (WIDTH // 2 - settings.get_width() // 2, HEIGHT - 50))
-        surf.blit(controls, (WIDTH // 2 - controls.get_width() // 2, HEIGHT - 74))
+            surf.blit(bgm_note, (WIDTH // 2 - bgm_note.get_width() // 2, 452))
+        surf.blit(settings, (WIDTH // 2 - settings.get_width() // 2, HEIGHT - 64))
+        surf.blit(controls, (WIDTH // 2 - controls.get_width() // 2, HEIGHT - 36))
 
     def draw_game_over(self, surf):
         over = BIG_FONT.render("Game Over", True, (255, 100, 100))
@@ -1111,7 +1113,13 @@ class Game:
             self.transition_alpha = max(0, self.transition_alpha - 20)
 
     def handle_events(self):
+        global SCREEN
         for event in pygame.event.get():
+            if event.type == pygame.VIDEORESIZE and not self.fullscreen:
+                SCREEN = pygame.display.set_mode((max(640, event.w), max(480, event.h)), pygame.RESIZABLE)
+                pygame.display.set_caption("Breakout: Arcade Edition")
+                continue
+
             if event.type == pygame.QUIT:
                 self.finalize_run()
                 self.save_high_score()
@@ -1301,7 +1309,19 @@ class Game:
         shake_y = random.randint(-self.shake_strength, self.shake_strength) if self.shake_frames > 0 else 0
 
         SCREEN.fill((0, 0, 0))
-        SCREEN.blit(world, (shake_x, shake_y))
+        screen_w, screen_h = SCREEN.get_size()
+        scale = min(screen_w / WIDTH, screen_h / HEIGHT)
+        target_w = max(1, int(WIDTH * scale))
+        target_h = max(1, int(HEIGHT * scale))
+
+        if target_w == WIDTH and target_h == HEIGHT:
+            frame = world
+        else:
+            frame = pygame.transform.smoothscale(world, (target_w, target_h))
+
+        offset_x = (screen_w - target_w) // 2
+        offset_y = (screen_h - target_h) // 2
+        SCREEN.blit(frame, (offset_x + int(shake_x * scale), offset_y + int(shake_y * scale)))
         pygame.display.flip()
 
 
