@@ -11,6 +11,7 @@ def default_profile():
             "sfx_volume": 0.9,
             "music_volume": 0.6,
             "bgm_enabled": True,
+            "ghost_replay": True,
             "controls": "ARROWS",
             "fullscreen": False,
         },

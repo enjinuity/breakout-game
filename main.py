@@ -118,6 +118,7 @@ class Game:
         self.round_start_countdown = 0
         self.tutorial_timer = 480
         self.bgm_enabled = True
+        self.ghost_replay_enabled = True
         self.bgm_loaded = False
         self.bgm_channel = None
         self.bgm_error = ""
@@ -181,6 +182,7 @@ class Game:
             "sfx_volume": self.sfx_volume,
             "music_volume": self.music_volume,
             "bgm_enabled": self.bgm_enabled,
+            "ghost_replay": self.ghost_replay_enabled,
             "controls": self.controls_label(),
             "fullscreen": self.fullscreen,
         }
@@ -194,6 +196,7 @@ class Game:
         self.sfx_volume = float(settings.get("sfx_volume", self.sfx_volume))
         self.music_volume = float(settings.get("music_volume", self.music_volume))
         self.bgm_enabled = bool(settings.get("bgm_enabled", self.bgm_enabled))
+        self.ghost_replay_enabled = bool(settings.get("ghost_replay", self.ghost_replay_enabled))
         if settings.get("controls", "ARROWS") == "WASD":
             self.left_key = pygame.K_a
             self.right_key = pygame.K_d
@@ -256,6 +259,14 @@ class Game:
         else:
             self.left_key = pygame.K_LEFT
             self.right_key = pygame.K_RIGHT
+        self.save_profile()
+
+    def toggle_ghost_replay(self):
+        self.ghost_replay_enabled = not self.ghost_replay_enabled
+        if not self.ghost_replay_enabled:
+            self.ghost_playback = None
+        elif self.game_mode == "DAILY" and self.daily_label:
+            self.ghost_playback = get_daily_ghost(self.profile, self.daily_label)
         self.save_profile()
 
     def controls_label(self):
@@ -337,7 +348,7 @@ class Game:
         xp_gain, currency_gain = self.add_rewards_for_run()
         self.update_leaderboard()
         ghost_saved = False
-        if self.game_mode == "DAILY" and self.daily_label and self.ghost_record_trace:
+        if self.game_mode == "DAILY" and self.ghost_replay_enabled and self.daily_label and self.ghost_record_trace:
             ghost_saved = update_daily_ghost(
                 self.profile,
                 self.daily_label,
@@ -388,7 +399,11 @@ class Game:
         else:
             self.daily_seed = 0
             self.daily_label = ""
-        self.ghost_playback = get_daily_ghost(self.profile, self.daily_label) if self.game_mode == "DAILY" else None
+        self.ghost_playback = (
+            get_daily_ghost(self.profile, self.daily_label)
+            if self.game_mode == "DAILY" and self.ghost_replay_enabled
+            else None
+        )
         self.save_profile()
         self.run_shots = 0
         self.run_hits = 0
@@ -727,7 +742,7 @@ class Game:
         self.particles = next_particles
 
     def record_ghost_frame(self):
-        if self.game_mode != "DAILY" or not self.run_active:
+        if self.game_mode != "DAILY" or not self.run_active or not self.ghost_replay_enabled:
             return
         if self.run_frame % self.ghost_record_step != 0:
             return
@@ -746,7 +761,7 @@ class Game:
         )
 
     def ghost_frame_snapshot(self):
-        if self.game_mode != "DAILY" or not self.ghost_playback:
+        if self.game_mode != "DAILY" or not self.ghost_replay_enabled or not self.ghost_playback:
             return None
         trace = self.ghost_playback.get("trace", [])
         if not trace:
@@ -1321,6 +1336,7 @@ class Game:
             ("SFX Volume", f"{int(self.sfx_volume * 100)}%"),
             ("Music Volume", f"{int(self.music_volume * 100)}%"),
             ("Background Music", "ON" if self.bgm_enabled else "OFF"),
+            ("Ghost Replay", "ON" if self.ghost_replay_enabled else "OFF"),
             ("Controls", self.controls_label()),
             ("Fullscreen", "ON" if self.fullscreen else "OFF"),
             ("Back", "Return"),
@@ -1576,9 +1592,9 @@ class Game:
                     continue
 
                 if event.key == pygame.K_UP:
-                    self.settings_index = (self.settings_index - 1) % 7
+                    self.settings_index = (self.settings_index - 1) % 8
                 elif event.key == pygame.K_DOWN:
-                    self.settings_index = (self.settings_index + 1) % 7
+                    self.settings_index = (self.settings_index + 1) % 8
                 elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
                     direction = -1 if event.key == pygame.K_LEFT else 1
                     if self.settings_index == 0:
@@ -1596,17 +1612,21 @@ class Game:
                     elif self.settings_index == 3:
                         self.toggle_bgm()
                     elif self.settings_index == 4:
-                        self.toggle_controls_preset()
+                        self.toggle_ghost_replay()
                     elif self.settings_index == 5:
+                        self.toggle_controls_preset()
+                    elif self.settings_index == 6:
                         self.toggle_fullscreen()
                 elif event.key == pygame.K_RETURN:
                     if self.settings_index == 3:
                         self.toggle_bgm()
                     elif self.settings_index == 4:
-                        self.toggle_controls_preset()
+                        self.toggle_ghost_replay()
                     elif self.settings_index == 5:
-                        self.toggle_fullscreen()
+                        self.toggle_controls_preset()
                     elif self.settings_index == 6:
+                        self.toggle_fullscreen()
+                    elif self.settings_index == 7:
                         self.game_state = self.settings_return_state
                 continue
 

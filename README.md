@@ -17,6 +17,7 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 - High score now autosaves immediately when beaten
 - Menu + pause + game-over states, volume controls, alternative movement keys
 - Dedicated Settings screen (master/SFX/music levels, controls preset, fullscreen, BGM)
+- Dedicated Settings screen (master/SFX/music levels, controls preset, fullscreen, BGM, ghost replay toggle)
 - Mouse-clickable menu/settings/shop/run-summary controls
 - Local leaderboard (top 10) per mode
 - Run summary screen with rewards and performance metrics

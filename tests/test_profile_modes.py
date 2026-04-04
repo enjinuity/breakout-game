@@ -32,6 +32,7 @@ class ProfileModeTests(unittest.TestCase):
         self.assertIn("leaderboards", data)
         self.assertIn("ghosts", data)
         self.assertIn("tutorial", data)
+        self.assertIn("ghost_replay", data.get("settings", {}))
 
     def test_mode_cycle(self):
         game = self.main.Game()
