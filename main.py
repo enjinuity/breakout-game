@@ -14,6 +14,8 @@ from config import (
     CAMPAIGN_LEVELS,
     DAILY_BOSS_INTERVAL,
     DIFFICULTY_CONFIG,
+    GHOST_MAX_FRAMES,
+    GHOST_RECORD_STEP,
     GAME_MODES,
     HEIGHT,
     HIGH_SCORE_FILE,
@@ -30,11 +32,13 @@ from game_state import (
     build_daily_share_code,
     daily_label_to_seed,
     default_profile,
+    get_daily_ghost,
     load_high_score as load_high_score_data,
     load_profile as load_profile_data,
     parse_daily_share_code,
     save_high_score as save_high_score_data,
     save_profile as save_profile_data,
+    update_daily_ghost,
     update_leaderboard as update_profile_leaderboard,
 )
 from modes import boss_attack_name, boss_personality_for_level, normal_brick_modifier_rolls
@@ -129,6 +133,11 @@ class Game:
         self.daily_seed_override_level = 1
         self.daily_share_input = ""
         self.daily_share_input_message = ""
+        self.ghost_record_step = GHOST_RECORD_STEP
+        self.ghost_max_frames = GHOST_MAX_FRAMES
+        self.ghost_record_trace = []
+        self.ghost_playback = None
+        self.run_frame = 0
         self.last_run_summary = {}
         self.run_shots = 0
         self.run_hits = 0
@@ -327,6 +336,16 @@ class Game:
                 stats["daily_best_date"] = self.daily_label or date.today().isoformat()
         xp_gain, currency_gain = self.add_rewards_for_run()
         self.update_leaderboard()
+        ghost_saved = False
+        if self.game_mode == "DAILY" and self.daily_label and self.ghost_record_trace:
+            ghost_saved = update_daily_ghost(
+                self.profile,
+                self.daily_label,
+                self.score,
+                self.level,
+                self.ghost_record_trace,
+                self.ghost_record_step,
+            )
         dodged = max(0, self.run_projectiles_spawned - self.run_projectiles_hit)
         accuracy = 0 if self.run_shots == 0 else min(100, int((self.run_hits / max(1, self.run_shots)) * 100))
         self.last_run_summary = {
@@ -339,6 +358,7 @@ class Game:
             "accuracy": accuracy,
             "projectiles_dodged": dodged,
             "daily_share": build_daily_share_code(self.daily_label, self.level) if self.game_mode == "DAILY" else "",
+            "ghost_saved": ghost_saved,
         }
         self.run_active = False
         self.save_profile()
@@ -368,12 +388,15 @@ class Game:
         else:
             self.daily_seed = 0
             self.daily_label = ""
+        self.ghost_playback = get_daily_ghost(self.profile, self.daily_label) if self.game_mode == "DAILY" else None
         self.save_profile()
         self.run_shots = 0
         self.run_hits = 0
         self.run_projectiles_spawned = 0
         self.run_projectiles_hit = 0
         self.run_combo_peak = 0
+        self.ghost_record_trace = []
+        self.run_frame = 0
         self.reset_run(full_reset=True)
 
     def reset_run(self, full_reset):
@@ -703,6 +726,37 @@ class Game:
                 next_particles.append(p)
         self.particles = next_particles
 
+    def record_ghost_frame(self):
+        if self.game_mode != "DAILY" or not self.run_active:
+            return
+        if self.run_frame % self.ghost_record_step != 0:
+            return
+        max_samples = max(1, self.ghost_max_frames // self.ghost_record_step)
+        if len(self.ghost_record_trace) >= max_samples:
+            return
+        ball_pos = None
+        if self.balls and not self.ball_attached:
+            ball = self.balls[0]
+            ball_pos = [round(float(ball.x), 1), round(float(ball.y), 1)]
+        self.ghost_record_trace.append(
+            {
+                "p": int(self.paddle.rect.centerx),
+                "b": ball_pos,
+            }
+        )
+
+    def ghost_frame_snapshot(self):
+        if self.game_mode != "DAILY" or not self.ghost_playback:
+            return None
+        trace = self.ghost_playback.get("trace", [])
+        if not trace:
+            return None
+        step = max(1, int(self.ghost_playback.get("step", 1)))
+        idx = min(len(trace) - 1, self.run_frame // step)
+        if idx < 0:
+            return None
+        return trace[idx]
+
     def spawn_boss_pattern(self, pattern):
         if not self.boss_brick:
             return 0
@@ -1018,6 +1072,9 @@ class Game:
         surf.blit(level_text, (330, 6))
         surf.blit(hi_text, (14, 38))
         surf.blit(diff_text, (180, 38))
+        if self.game_mode == "DAILY" and self.ghost_playback:
+            ghost_text = SMALL_FONT.render("Ghost: ON", True, (170, 220, 255))
+            surf.blit(ghost_text, (WIDTH - 110, 38))
 
         if self.combo > 1:
             combo_text = FONT.render(f"Combo x{self.combo}", True, (255, 210, 80))
@@ -1070,6 +1127,19 @@ class Game:
         for proj in self.boss_projectiles:
             pygame.draw.circle(surf, proj["color"], (int(proj["x"]), int(proj["y"])), proj["r"])
             pygame.draw.circle(surf, (20, 20, 20), (int(proj["x"]), int(proj["y"])), proj["r"], 2)
+
+        ghost = self.ghost_frame_snapshot()
+        if ghost:
+            ghost_layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            gx = int(ghost.get("p", self.paddle.rect.centerx))
+            grect = self.paddle.rect.copy()
+            grect.centerx = gx
+            grect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
+            pygame.draw.rect(ghost_layer, (170, 220, 255, 90), grect, border_radius=4)
+            bpos = ghost.get("b")
+            if isinstance(bpos, list) and len(bpos) == 2:
+                pygame.draw.circle(ghost_layer, (170, 220, 255, 100), (int(bpos[0]), int(bpos[1])), 9)
+            surf.blit(ghost_layer, (0, 0))
 
         self.paddle.draw(surf)
         for ball in self.balls:
@@ -1354,6 +1424,8 @@ class Game:
         ]
         if data.get("daily_share"):
             lines.append(f"Daily share code: {data.get('daily_share')}")
+        if data.get("ghost_saved"):
+            lines.append("Ghost replay updated for this Daily seed.")
 
         y = 170
         for line in lines:
@@ -1684,6 +1756,9 @@ class Game:
                 self.shake_total_frames = 0
             if self.impact_flash_alpha > 0:
                 self.impact_flash_alpha = max(0, self.impact_flash_alpha - 14)
+
+            self.record_ghost_frame()
+            self.run_frame += 1
 
             if self.has_cleared_level():
                 self.go_to_next_level()

@@ -23,6 +23,7 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 - Campaign mode with a proper completion state
 - Daily Challenge mode with seeded layouts (same seed for the day)
 - Daily share-code input so runs can be replayed with the same seed
+- Daily ghost replay: your best run per daily seed is recorded and shown as a live ghost
 - Boss waves every 3 levels (moving boss + hazard drops + boss HP bar)
 - Boss personalities per tier (Sentinel/Trickster/Berserker) with unique attack rotations
 - Round start countdown + contextual control hints

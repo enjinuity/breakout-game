@@ -30,6 +30,7 @@ class ProfileModeTests(unittest.TestCase):
         self.assertIn("economy", data)
         self.assertIn("loadout", data)
         self.assertIn("leaderboards", data)
+        self.assertIn("ghosts", data)
         self.assertIn("tutorial", data)
 
     def test_mode_cycle(self):

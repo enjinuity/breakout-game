@@ -6,11 +6,13 @@ from game_state import (
     add_run_rewards,
     build_daily_share_code,
     daily_label_to_seed,
+    get_daily_ghost,
     load_high_score,
     load_profile,
     parse_daily_share_code,
     save_high_score,
     save_profile,
+    update_daily_ghost,
     update_leaderboard,
 )
 
@@ -30,6 +32,7 @@ class GameStateModuleTests(unittest.TestCase):
         save_profile(self.profile_path, profile)
         loaded = load_profile(self.profile_path, 0)
         self.assertEqual(loaded["economy"]["currency"], 99)
+        self.assertIn("ghosts", loaded)
 
     def test_high_score_round_trip(self):
         save_high_score(self.high_path, 1234)
@@ -54,6 +57,18 @@ class GameStateModuleTests(unittest.TestCase):
 
     def test_daily_seed(self):
         self.assertEqual(daily_label_to_seed("ABC"), ord("A") + ord("B") + ord("C"))
+
+    def test_daily_ghost_save_and_fetch(self):
+        profile = load_profile(self.profile_path, 0)
+        trace = [{"p": 450, "b": [300.0, 240.0]}, {"p": 460, "b": None}]
+        saved = update_daily_ghost(profile, "2026-04-04", 1200, 6, trace, 2)
+        self.assertTrue(saved)
+        ghost = get_daily_ghost(profile, "2026-04-04")
+        self.assertIsNotNone(ghost)
+        self.assertEqual(ghost["score"], 1200)
+
+        worse = update_daily_ghost(profile, "2026-04-04", 1100, 5, trace, 2)
+        self.assertFalse(worse)
 
 
 if __name__ == "__main__":

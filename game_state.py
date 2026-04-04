@@ -42,6 +42,7 @@ def default_profile():
             "CAMPAIGN": [],
             "DAILY": [],
         },
+        "ghosts": {},
         "tutorial": {
             "moved_once": False,
             "fired_laser_once": False,
@@ -86,6 +87,8 @@ def load_profile(path, legacy_high_score):
                     profile["loadout"].update(data["loadout"])
                 if isinstance(data.get("leaderboards"), dict):
                     profile["leaderboards"].update(data["leaderboards"])
+                if isinstance(data.get("ghosts"), dict):
+                    profile["ghosts"].update(data["ghosts"])
                 if isinstance(data.get("tutorial"), dict):
                     profile["tutorial"].update(data["tutorial"])
         except (ValueError, OSError, json.JSONDecodeError):
@@ -155,3 +158,34 @@ def parse_daily_share_code(code):
 
 def daily_label_to_seed(label):
     return sum(ord(ch) for ch in str(label))
+
+
+def get_daily_ghost(profile, daily_label):
+    ghosts = profile.setdefault("ghosts", {})
+    ghost = ghosts.get(daily_label)
+    if not isinstance(ghost, dict):
+        return None
+    trace = ghost.get("trace")
+    if not isinstance(trace, list) or not trace:
+        return None
+    return ghost
+
+
+def update_daily_ghost(profile, daily_label, score, level, trace, step, max_saved=30):
+    ghosts = profile.setdefault("ghosts", {})
+    existing = ghosts.get(daily_label)
+    if isinstance(existing, dict) and int(existing.get("score", 0)) > int(score):
+        return False
+
+    ghosts[daily_label] = {
+        "score": int(score),
+        "level": int(level),
+        "step": max(1, int(step)),
+        "trace": trace,
+    }
+
+    if len(ghosts) > max_saved:
+        for key in sorted(ghosts.keys()):
+            if key != daily_label and len(ghosts) > max_saved:
+                del ghosts[key]
+    return True
