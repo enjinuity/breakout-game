@@ -1,45 +1,54 @@
-import pygame
+"""Ball entity and collision behavior."""
+
 import math
 
+import pygame
+
+
 class Ball:
+    """Represents one moving ball in the arena."""
+
     def __init__(self, x, y, radius, color, speed=6):
-        # Set initial position and appearance
+        # Position + look.
         self.x = x
         self.y = y
         self.radius = radius
         self.color = color
+
+        # Base speed value used when scaling difficulty/powerups.
         self.speed = speed
 
-        # Set initial speed (dx = horizontal, dy = vertical)
+        # Start with a slight horizontal angle so gameplay begins dynamically.
         self.dx = speed * 0.6
-        self.dy = -speed # Moves upward initially
+        self.dy = -speed
 
     def move(self):
-        # Update ball position based on speed
+        """Move the ball by its velocity for one frame."""
         self.x += self.dx
         self.y += self.dy
 
     def draw(self, screen):
-        # Draw the ball on screen as a filled circle
+        """Render the ball as a filled circle."""
         pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.radius)
 
     def bounce_wall(self, screen_width, screen_height, wall_sound):
-        # Bounce off left or right walls
+        """Bounce on left/right/top walls and play impact SFX."""
+        # Left/right wall bounce.
         if self.x - self.radius <= 0 or self.x + self.radius >= screen_width:
-            self.dx *= -1  # Reverse horizontal direction
+            self.dx *= -1
             if wall_sound:
                 wall_sound.play()
 
-        # Bounce off top wall
+        # Top wall bounce.
         if self.y - self.radius <= 0:
-            self.dy *= -1  # Reverse vertical direction
+            self.dy *= -1
             if wall_sound:
                 wall_sound.play()
 
     def bounce_paddle(self, paddle_rect, paddle_sound):
-        # Check if ball hits paddle while moving downward
+        """Bounce from paddle and steer angle based on hit position."""
         if paddle_rect.collidepoint(self.x, self.y + self.radius) and self.dy > 0:
-            # Change launch angle based on hit position for player control.
+            # Hitting paddle edges gives steeper side angles.
             relative = (self.x - paddle_rect.centerx) / (paddle_rect.width / 2)
             relative = max(-1.0, min(1.0, relative))
             angle = relative * math.radians(65)
@@ -52,7 +61,7 @@ class Ball:
         return False
 
     def collide_with_rect(self, rect):
-        """Circle-rect collision with side-aware bounce. Returns True on collision."""
+        """Circle-vs-rectangle collision with side-aware bounce response."""
         closest_x = max(rect.left, min(self.x, rect.right))
         closest_y = max(rect.top, min(self.y, rect.bottom))
         dx = self.x - closest_x
@@ -66,6 +75,7 @@ class Ball:
         overlap_bottom = abs(rect.bottom - (self.y - self.radius))
         min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
 
+        # Flip horizontal or vertical direction based on nearest side.
         if min_overlap in (overlap_left, overlap_right):
             self.dx *= -1
         else:
@@ -73,12 +83,13 @@ class Ball:
         return True
 
     def apply_speed_scale(self, scale):
+        """Scale velocity and stored base speed together."""
         self.dx *= scale
         self.dy *= scale
         self.speed = max(3, self.speed * scale)
 
     def reset(self, x, y):
-        # Reset ball to given position and speed
+        """Put the ball back at a spawn point with default launch direction."""
         self.x = x
         self.y = y
         self.dx = self.speed * 0.6

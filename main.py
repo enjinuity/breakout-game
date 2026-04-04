@@ -1,3 +1,14 @@
+"""
+Main game runtime.
+
+Non-technical reading guide:
+1. `Game.__init__` prepares settings, progress, and starting objects.
+2. `tick()` runs every frame and updates gameplay logic.
+3. `render()` draws the current screen (menu, gameplay, settings, etc.).
+4. Helper methods below are grouped by responsibility:
+   saves/settings, run flow, gameplay systems, drawing, and input handling.
+"""
+
 import math
 import random
 import sys
@@ -61,15 +72,20 @@ SOUNDS = load_game_sounds()
 
 
 class Game:
+    """Owns all game state and coordinates update + drawing each frame."""
+
     def __init__(self):
+        # --- Audio/user preference values ---
         self.volume = 0.7
         self.sfx_volume = 0.9
         self.music_volume = 0.6
         self.high_score = self.load_high_score()
 
+        # --- Control bindings ---
         self.left_key = pygame.K_LEFT
         self.right_key = pygame.K_RIGHT
 
+        # --- Difficulty + mode selections ---
         self.difficulty_order = ["EASY", "NORMAL", "HARD"]
         self.difficulty_index = 1
         self.difficulty = self.difficulty_order[self.difficulty_index]
@@ -80,6 +96,7 @@ class Game:
         self.level_speed_step = DIFFICULTY_CONFIG[self.difficulty]["speed_step"]
         self.score_mult = DIFFICULTY_CONFIG[self.difficulty]["score_mult"]
 
+        # --- UI/scene state ---
         self.game_state = "MENU"
         self.transition_alpha = 255
         self.transition_target = "MENU"
@@ -92,12 +109,14 @@ class Game:
         self.summary_buttons = {}
         self.leaderboard_scroll = 0
 
+        # --- Visual effects ---
         self.shake_frames = 0
         self.shake_strength = 0
         self.shake_total_frames = 0
         self.shake_phase = 0.0
         self.particles = []
 
+        # --- Active power-up/combat state ---
         self.laser_charges = 0
         self.laser_cooldown = 0
         self.laser_flash_timer = 0
@@ -110,9 +129,11 @@ class Game:
         self.power_message = ""
         self.power_message_timer = 0
 
+        # --- Score combo state ---
         self.combo = 0
         self.combo_timer = 0
 
+        # --- Run/progression state ---
         self.level = 1
         self.level_flash_timer = 0
         self.round_start_countdown = 0
@@ -149,6 +170,7 @@ class Game:
         self.impact_flash_alpha = 0
         self.boss_personality = None
 
+        # Load persistent profile and apply saved settings before building the run.
         self.profile = self.load_profile()
         self.apply_profile_settings()
         if self.fullscreen:
@@ -163,12 +185,15 @@ class Game:
         self.init_controller()
 
     def default_profile(self):
+        """Return default profile schema (delegates to helper module)."""
         return default_profile()
 
     def load_profile(self):
+        """Load profile from disk and merge it with defaults."""
         return load_profile_data(PROFILE_FILE, self.load_high_score())
 
     def init_controller(self):
+        """Attach first connected gamepad, if available."""
         self.controller = None
         pygame.joystick.init()
         if pygame.joystick.get_count() > 0:
@@ -176,6 +201,7 @@ class Game:
             self.controller.init()
 
     def save_profile(self):
+        """Save current profile/settings/high score to disk."""
         self.profile["high_score"] = int(self.high_score)
         self.profile["settings"] = {
             "master_volume": self.volume,
@@ -190,6 +216,7 @@ class Game:
         self.save_high_score()
 
     def apply_profile_settings(self):
+        """Apply persisted settings values to runtime variables."""
         settings = self.profile.get("settings", {})
         self.high_score = max(int(self.high_score), int(self.profile.get("high_score", 0)))
         self.volume = float(settings.get("master_volume", self.volume))
@@ -206,17 +233,21 @@ class Game:
         self.fullscreen = bool(settings.get("fullscreen", self.fullscreen))
 
     def load_high_score(self):
+        """Read high score save file."""
         return load_high_score_data(HIGH_SCORE_FILE)
 
     def save_high_score(self):
+        """Write high score save file."""
         save_high_score_data(HIGH_SCORE_FILE, self.high_score)
 
     def play_sound(self, name):
+        """Play one short sound effect by key."""
         sound = SOUNDS.get(name)
         if sound:
             sound.play()
 
     def apply_volume(self):
+        """Push volume settings to loaded sounds/music."""
         apply_audio_volume(
             SOUNDS,
             self.volume,
@@ -227,9 +258,11 @@ class Game:
         )
 
     def try_start_music(self):
+        """Attempt to start looping BGM and keep error info for UI."""
         self.bgm_loaded, self.bgm_channel, self.bgm_error = start_music_loop(MUSIC_PATH)
 
     def update_difficulty(self, direction):
+        """Cycle difficulty and refresh balancing values."""
         self.difficulty_index = (self.difficulty_index + direction) % len(self.difficulty_order)
         self.difficulty = self.difficulty_order[self.difficulty_index]
         config = DIFFICULTY_CONFIG[self.difficulty]
@@ -239,20 +272,24 @@ class Game:
         self.score_mult = config["score_mult"]
 
     def update_mode(self, direction):
+        """Cycle game mode (Campaign/Daily)."""
         self.mode_index = (self.mode_index + direction) % len(GAME_MODES)
         self.game_mode = GAME_MODES[self.mode_index]
 
     def daily_seed_for_today(self):
+        """Generate deterministic seed label/value for today's Daily run."""
         today = date.today().isoformat()
         self.daily_label = today
         return daily_label_to_seed(today)
 
     def toggle_bgm(self):
+        """Turn background music on/off."""
         self.bgm_enabled = not self.bgm_enabled
         self.apply_volume()
         self.save_profile()
 
     def toggle_controls_preset(self):
+        """Switch between Arrow keys and WASD movement presets."""
         if self.left_key == pygame.K_LEFT:
             self.left_key = pygame.K_a
             self.right_key = pygame.K_d
@@ -262,6 +299,7 @@ class Game:
         self.save_profile()
 
     def toggle_ghost_replay(self):
+        """Enable/disable Daily ghost recording + playback."""
         self.ghost_replay_enabled = not self.ghost_replay_enabled
         if not self.ghost_replay_enabled:
             self.ghost_playback = None
@@ -270,27 +308,35 @@ class Game:
         self.save_profile()
 
     def controls_label(self):
+        """Return current keyboard preset label for UI display."""
         return "ARROWS" if self.left_key == pygame.K_LEFT else "WASD"
 
     def loadout(self):
+        """Convenience accessor for loadout section in profile."""
         return self.profile.setdefault("loadout", self.default_profile()["loadout"])
 
     def economy(self):
+        """Convenience accessor for economy section in profile."""
         return self.profile.setdefault("economy", self.default_profile()["economy"])
 
     def set_game_state(self, state):
+        """Change active scene (menu, play, settings, etc.)."""
         self.game_state = state
 
     def player_currency(self):
+        """Return player currency total as integer."""
         return int(self.economy().get("currency", 0))
 
     def add_rewards_for_run(self):
+        """Apply run-end XP/currency rewards."""
         return add_run_rewards(self.profile, self.score, self.level)
 
     def update_leaderboard(self):
+        """Insert current run into mode leaderboard."""
         update_profile_leaderboard(self.profile, self.game_mode, self.score, self.level, self.daily_label)
 
     def buy_item(self, item_key):
+        """Try to buy one shop item and return (success, message)."""
         load = self.loadout()
         econ = self.economy()
         cost = SHOP_PRICES.get(item_key)
@@ -318,6 +364,7 @@ class Game:
         return True, f"Unlocked {item}"
 
     def toggle_fullscreen(self):
+        """Toggle fullscreen display mode."""
         global SCREEN
         self.fullscreen = not self.fullscreen
         if self.fullscreen:
@@ -329,11 +376,13 @@ class Game:
         self.save_profile()
 
     def open_settings(self, return_state):
+        """Open settings scene and remember where to return."""
         self.settings_return_state = return_state
         self.settings_index = 0
         self.game_state = "SETTINGS"
 
     def finalize_run(self):
+        """Close out the active run, grant rewards, and build summary stats."""
         if not self.run_active:
             return
         stats = self.profile["stats"]
@@ -376,6 +425,7 @@ class Game:
         self.set_game_state("RUN_SUMMARY")
 
     def start_new_game(self):
+        """Start a fresh run using current menu selections."""
         if self.run_active:
             self.finalize_run()
         config = DIFFICULTY_CONFIG[self.difficulty]
@@ -415,6 +465,7 @@ class Game:
         self.reset_run(full_reset=True)
 
     def reset_run(self, full_reset):
+        """Reset board entities and temporary effects for next life/level/run."""
         if full_reset:
             self.score = 0
             self.lives = getattr(self, "starting_lives", DIFFICULTY_CONFIG[self.difficulty]["lives"])
@@ -453,10 +504,12 @@ class Game:
         self.boss_pattern_index = 0
 
     def is_boss_level(self, level):
+        """Return True when this level should spawn a boss wave."""
         interval = DAILY_BOSS_INTERVAL if self.game_mode == "DAILY" else BOSS_LEVEL_INTERVAL
         return level % interval == 0
 
     def create_boss_wave(self, level):
+        """Create boss brick plus support guards for boss levels."""
         bricks = []
         self.boss_personality = boss_personality_for_level(level, self.game_mode)
         boss_hits = 14 + level * 2 + int(self.boss_personality["speed"] * 1.5)
@@ -489,6 +542,7 @@ class Game:
         return bricks
 
     def create_daily_layout(self, level):
+        """Generate deterministic Daily brick layout from seed + level."""
         rng = random.Random(self.daily_seed + level * 7919)
         rows = 6
         cols = 10
@@ -511,6 +565,7 @@ class Game:
         return layout
 
     def create_bricks(self, level):
+        """Build all bricks for the current level/wave."""
         if self.is_boss_level(level):
             return self.create_boss_wave(level)
 
@@ -563,9 +618,11 @@ class Game:
         return bricks
 
     def spawn_specific_powerup(self, x, y, power_type):
+        """Spawn one known powerup/hazard type."""
         self.powerups.append(PowerUp(x, y, 26, 20, power_type))
 
     def spawn_powerup(self, x, y):
+        """Roll random powerup/hazard drop based on mode and level."""
         if self.is_boss_level(self.level):
             # Boss waves are tighter; fewer freebies and more pressure.
             if random.random() > 0.12:
@@ -585,6 +642,7 @@ class Game:
         self.powerups.append(PowerUp(x, y, 26, 20, power_type))
 
     def spawn_particles(self, x, y, color, count=10, layer=1):
+        """Create short-lived particles for impact feedback."""
         for _ in range(count):
             angle = random.uniform(0, math.pi * 2)
             speed = random.uniform(1.2, 4.0)
@@ -602,12 +660,14 @@ class Game:
             )
 
     def add_shake(self, strength, frames):
+        """Request a camera shake burst."""
         if frames >= self.shake_frames:
             self.shake_total_frames = frames
         self.shake_strength = max(self.shake_strength, strength)
         self.shake_frames = max(self.shake_frames, frames)
 
     def explode_neighbors(self, source_brick):
+        """Damage nearby bricks for explosive effects."""
         destroyed_points = 0
         for brick in self.bricks:
             if brick.destroyed or brick.unbreakable:
@@ -622,6 +682,7 @@ class Game:
         return destroyed_points
 
     def detonate_bomb(self, source_brick):
+        """Force timed bomb explosion and return points gained."""
         if source_brick.destroyed:
             return 0
         source_brick.destroyed = True
@@ -632,10 +693,12 @@ class Game:
         return gained
 
     def set_power_message(self, text):
+        """Show short center-screen status text for recent effects."""
         self.power_message = text
         self.power_message_timer = 140
 
     def award_points(self, points):
+        """Apply score multiplier and update high score if needed."""
         gained = int(points * self.score_mult)
         self.score += gained
         if self.score > self.high_score:
@@ -644,6 +707,7 @@ class Game:
         return gained
 
     def apply_powerup(self, powerup):
+        """Apply gameplay effect for collected powerup/hazard."""
         ptype = powerup.type
 
         if ptype == "multi":
@@ -700,6 +764,7 @@ class Game:
             self.set_power_message("Hazard: ball speed up")
 
     def fire_laser(self):
+        """Fire paddle laser upward to damage nearest aligned brick."""
         if self.laser_charges <= 0 or self.laser_cooldown > 0:
             return
 
@@ -731,6 +796,7 @@ class Game:
                 self.spawn_powerup(nearest.rect.centerx, nearest.rect.centery)
 
     def update_particles(self):
+        """Advance and cull active particles."""
         next_particles = []
         for p in self.particles:
             p["x"] += p["dx"]
@@ -742,6 +808,7 @@ class Game:
         self.particles = next_particles
 
     def record_ghost_frame(self):
+        """Record sparse ghost samples for Daily replay."""
         if self.game_mode != "DAILY" or not self.run_active or not self.ghost_replay_enabled:
             return
         if self.run_frame % self.ghost_record_step != 0:
@@ -761,6 +828,7 @@ class Game:
         )
 
     def ghost_frame_snapshot(self):
+        """Read ghost sample for current frame, if available."""
         if self.game_mode != "DAILY" or not self.ghost_replay_enabled or not self.ghost_playback:
             return None
         trace = self.ghost_playback.get("trace", [])
@@ -773,6 +841,7 @@ class Game:
         return trace[idx]
 
     def spawn_boss_pattern(self, pattern):
+        """Spawn projectiles/hazards for one boss attack pattern."""
         if not self.boss_brick:
             return 0
         spawned = 0
@@ -845,6 +914,7 @@ class Game:
         return spawned
 
     def update_boss_mechanics(self):
+        """Move boss and trigger timed attack patterns."""
         if not self.boss_brick or self.boss_brick.destroyed:
             return
 
@@ -868,6 +938,7 @@ class Game:
             self.run_projectiles_spawned += spawned
 
     def update_boss_projectiles(self):
+        """Move boss projectiles and resolve paddle hits."""
         if not self.boss_projectiles:
             return
 
@@ -894,6 +965,7 @@ class Game:
         self.boss_projectiles = next_projectiles
 
     def update_brick_modifiers(self):
+        """Tick special brick timers (regen + timed bombs)."""
         for brick in self.bricks:
             if brick.destroyed:
                 continue
@@ -909,12 +981,14 @@ class Game:
                     self.award_points(self.detonate_bomb(brick))
 
     def update_combo(self):
+        """Decay combo when player goes too long without scoring hits."""
         if self.combo_timer > 0:
             self.combo_timer -= 1
         else:
             self.combo = 0
 
     def update_balls(self, keys):
+        """Move balls, resolve paddle/wall/life-loss behavior."""
         if self.ball_attached and self.balls:
             self.balls[0].x = self.paddle.rect.centerx
             self.balls[0].y = self.paddle.rect.top - self.balls[0].radius
@@ -981,6 +1055,7 @@ class Game:
             self.round_start_countdown = 120
 
     def update_brick_collisions(self):
+        """Resolve ball-brick collisions and brick special effects."""
         for ball in list(self.balls):
             for brick in self.bricks:
                 if brick.destroyed:
@@ -1032,6 +1107,7 @@ class Game:
                 break
 
     def update_powerups(self):
+        """Update falling powerups and apply effects on pickup."""
         for powerup in self.powerups:
             powerup.update()
             if powerup.rect.colliderect(self.paddle.rect):
@@ -1042,9 +1118,11 @@ class Game:
         self.powerups = [p for p in self.powerups if p.active]
 
     def has_cleared_level(self):
+        """Check whether all breakable bricks are gone."""
         return all(brick.destroyed or brick.unbreakable for brick in self.bricks)
 
     def go_to_next_level(self):
+        """Advance to next level or end run if campaign is complete."""
         if self.game_mode == "CAMPAIGN" and self.level >= CAMPAIGN_LEVELS:
             self.game_state = "CAMPAIGN_WIN"
             self.play_sound("win")
@@ -1068,10 +1146,12 @@ class Game:
         self.play_sound("win")
 
     def draw_particles(self, surf):
+        """Draw particles in layer order (background to foreground)."""
         for p in sorted(self.particles, key=lambda item: item.get("layer", 1)):
             pygame.draw.circle(surf, p["color"], (int(p["x"]), int(p["y"])), p["size"])
 
     def draw_hud(self, surf):
+        """Draw top HUD info (score, lives, mode, status tags)."""
         pygame.draw.rect(surf, (16, 20, 28), (0, 0, WIDTH, HUD_HEIGHT))
         score_text = FONT.render(f"Score: {self.score}", True, (240, 240, 240))
         lives_text = FONT.render(f"Lives: {self.lives}", True, (240, 240, 240))
@@ -1110,6 +1190,7 @@ class Game:
             surf.blit(boss_tag, (WIDTH - boss_tag.get_width() - 10, 6))
 
     def draw_world(self, surf):
+        """Draw active gameplay scene (background, entities, effects)."""
         # Layered background with loadout variants.
         bg = self.loadout().get("selected_background", "default")
         if bg == "sunset":
@@ -1210,6 +1291,7 @@ class Game:
             surf.blit(label, (bar_x - 50, bar_y - 2))
 
     def draw_menu(self, surf):
+        """Draw main menu with mode/difficulty/status/buttons."""
         for i in range(0, HEIGHT, 20):
             pygame.draw.rect(surf, (12 + i // 30, 14 + i // 30, 22 + i // 18), (0, i, WIDTH, 20))
 
@@ -1281,6 +1363,7 @@ class Game:
             surf.blit(share_note, (WIDTH // 2 - share_note.get_width() // 2, HEIGHT - 140))
 
     def draw_seed_input(self, surf):
+        """Draw screen where player can paste Daily share code."""
         surf.fill((12, 16, 28))
         title = BIG_FONT.render("Daily Share Code", True, (245, 245, 245))
         hint = SMALL_FONT.render("Paste code like DAILY-2026-04-04-5 then press ENTER. ESC to return.", True, (205, 205, 205))
@@ -1296,6 +1379,7 @@ class Game:
             surf.blit(msg, (WIDTH // 2 - msg.get_width() // 2, box.bottom + 24))
 
     def draw_game_over(self, surf):
+        """Draw game over overlay text."""
         over = BIG_FONT.render("Game Over", True, (255, 100, 100))
         score = FONT.render(f"Score: {self.score}", True, (240, 240, 240))
         again = SMALL_FONT.render("Press ENTER to restart or ESC for menu", True, (220, 220, 220))
@@ -1305,6 +1389,7 @@ class Game:
         surf.blit(again, (WIDTH // 2 - again.get_width() // 2, HEIGHT // 2 + 40))
 
     def draw_campaign_win(self, surf):
+        """Draw campaign completion overlay."""
         win = BIG_FONT.render("Campaign Complete", True, (140, 255, 170))
         score = FONT.render(f"Final Score: {self.score}", True, (240, 240, 240))
         again = SMALL_FONT.render("Press ENTER to play again or ESC for menu", True, (220, 220, 220))
@@ -1314,6 +1399,7 @@ class Game:
         surf.blit(again, (WIDTH // 2 - again.get_width() // 2, HEIGHT // 2 + 40))
 
     def draw_paused(self, surf):
+        """Draw pause overlay and pause controls help."""
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 135))
         surf.blit(overlay, (0, 0))
@@ -1323,6 +1409,7 @@ class Game:
         surf.blit(opts, (WIDTH // 2 - opts.get_width() // 2, HEIGHT // 2 + 20))
 
     def draw_settings(self, surf):
+        """Draw settings menu and +/- click areas."""
         for i in range(0, HEIGHT, 24):
             pygame.draw.rect(surf, (10 + i // 28, 12 + i // 34, 20 + i // 24), (0, i, WIDTH, 24))
 
@@ -1361,6 +1448,7 @@ class Game:
             y += 46
 
     def draw_shop(self, surf):
+        """Draw shop/loadout cards for cosmetics."""
         surf.fill((16, 18, 28))
         title = BIG_FONT.render("Shop & Loadout", True, (245, 245, 245))
         econ = self.economy()
@@ -1397,6 +1485,7 @@ class Game:
             surf.blit(stext, (rect.x + 12, rect.y + 40))
 
     def draw_leaderboard(self, surf):
+        """Draw top-10 local leaderboard lists by mode."""
         surf.fill((14, 16, 26))
         title = BIG_FONT.render("Leaderboard", True, (245, 245, 245))
         hint = SMALL_FONT.render("Top 10 per mode. ESC to return.", True, (210, 210, 210))
@@ -1424,6 +1513,7 @@ class Game:
                 surf.blit(text, (x, y0 + 34 + rank * 26))
 
     def draw_run_summary(self, surf):
+        """Draw post-run stat summary and action buttons."""
         surf.fill((20, 14, 24))
         title = BIG_FONT.render("Run Summary", True, (255, 245, 255))
         surf.blit(title, (WIDTH // 2 - title.get_width() // 2, 70))
@@ -1459,6 +1549,7 @@ class Game:
             draw_button(surf, rect, "Back to Menu" if key == "MENU" else "Run Again", SMALL_FONT, hover)
 
     def draw_transition(self, surf):
+        """Draw fade overlay used during scene transitions."""
         if self.transition_alpha <= 0:
             return
         overlay = pygame.Surface((WIDTH, HEIGHT))
@@ -1467,6 +1558,7 @@ class Game:
         surf.blit(overlay, (0, 0))
 
     def update_transition(self):
+        """Advance transition alpha each frame."""
         if self.transition_target != self.game_state:
             self.transition_alpha = min(255, self.transition_alpha + 28)
             if self.transition_alpha >= 250:
@@ -1475,6 +1567,7 @@ class Game:
             self.transition_alpha = max(0, self.transition_alpha - 20)
 
     def handle_events(self):
+        """Process keyboard/mouse/window events and route by current scene."""
         global SCREEN
         for event in pygame.event.get():
             if event.type == pygame.VIDEORESIZE and not self.fullscreen:
@@ -1696,6 +1789,7 @@ class Game:
                 self.save_profile()
 
     def tick(self):
+        """Run one full game frame: input -> update -> render."""
         self.handle_events()
 
         keys = pygame.key.get_pressed()
@@ -1786,6 +1880,7 @@ class Game:
         self.render()
 
     def render(self):
+        """Render current scene to off-screen world then scale to window."""
         world = pygame.Surface((WIDTH, HEIGHT))
 
         if self.game_state == "MENU":

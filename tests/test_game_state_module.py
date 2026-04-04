@@ -1,3 +1,5 @@
+"""Unit tests for standalone save/progression helpers in game_state.py."""
+
 import os
 import tempfile
 import unittest
@@ -18,6 +20,8 @@ from game_state import (
 
 
 class GameStateModuleTests(unittest.TestCase):
+    """Verifies profile I/O, rewards math, leaderboard behavior, and ghost storage."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.profile_path = os.path.join(self.tmp.name, "player_profile.json")

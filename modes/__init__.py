@@ -1,6 +1,15 @@
+"""
+Rules for game modes and boss behavior presets.
+
+Non-technical summary:
+- Defines boss "personalities" (movement speed + attack rhythm).
+- Provides helper math to scale modifier frequency as waves increase.
+"""
+
 from config import GAME_MODES
 
 
+# Predefined boss personalities used by tier/wave.
 BOSS_PERSONALITIES = [
     {
         "name": "Sentinel",
@@ -24,12 +33,14 @@ BOSS_PERSONALITIES = [
 
 
 def clamp_mode(mode):
+    """Return a safe mode value if input mode is unknown."""
     if mode in GAME_MODES:
         return mode
     return GAME_MODES[0]
 
 
 def boss_personality_for_level(level, game_mode):
+    """Pick boss personality tier based on wave and mode."""
     tier = min(len(BOSS_PERSONALITIES) - 1, max(0, (int(level) - 1) // 4))
     personality = dict(BOSS_PERSONALITIES[tier])
     if game_mode == "DAILY":
@@ -40,6 +51,7 @@ def boss_personality_for_level(level, game_mode):
 
 
 def boss_attack_name(pattern):
+    """Human-readable labels for boss pattern codes."""
     names = {
         "spread": "spread",
         "rain": "rain",
@@ -51,7 +63,7 @@ def boss_attack_name(pattern):
 
 
 def normal_brick_modifier_rolls(level, game_mode):
-    # Returns ascending thresholds for regen, teleport, shielded, timed_bomb.
+    """Return probability thresholds for special normal-brick modifiers."""
     # Late waves lean harder into modifiers.
     level_boost = min(0.06, max(0.0, (int(level) - 1) * 0.005))
     daily_boost = 0.02 if game_mode == "DAILY" else 0.0

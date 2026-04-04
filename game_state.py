@@ -1,9 +1,19 @@
+"""
+Persistence and progression helpers.
+
+Non-technical summary:
+- Handles save files (profile + high score).
+- Computes rewards and leaderboard updates.
+- Encodes/decodes Daily share codes and ghost storage.
+"""
+
 import json
 import os
 from datetime import date
 
 
 def default_profile():
+    """Return a complete default profile structure for new players."""
     return {
         "high_score": 0,
         "settings": {
@@ -52,6 +62,7 @@ def default_profile():
 
 
 def load_high_score(path):
+    """Read high score file and safely return 0 on any file issue."""
     if not os.path.exists(path):
         return 0
     try:
@@ -63,6 +74,7 @@ def load_high_score(path):
 
 
 def save_high_score(path, value):
+    """Write high score to disk; ignore write failures to avoid hard crashes."""
     try:
         with open(path, "w", encoding="utf-8") as file:
             json.dump({"high_score": int(value)}, file)
@@ -71,6 +83,13 @@ def save_high_score(path, value):
 
 
 def load_profile(path, legacy_high_score):
+    """
+    Read profile file and merge it with defaults.
+
+    Why merge:
+    - Older save files may miss newly added fields.
+    - Defaults keep the game forward-compatible.
+    """
     profile = default_profile()
     if os.path.exists(path):
         try:
@@ -100,6 +119,7 @@ def load_profile(path, legacy_high_score):
 
 
 def save_profile(path, profile):
+    """Persist full profile JSON."""
     try:
         with open(path, "w", encoding="utf-8") as file:
             json.dump(profile, file, indent=2)
@@ -108,6 +128,7 @@ def save_profile(path, profile):
 
 
 def add_run_rewards(profile, score, level):
+    """Grant XP and currency after a run."""
     econ = profile.setdefault("economy", default_profile()["economy"])
     xp_gain = int(score // 18 + level * 12)
     currency_gain = int(score // 45 + level * 6)
@@ -117,6 +138,7 @@ def add_run_rewards(profile, score, level):
 
 
 def update_leaderboard(profile, game_mode, score, level, daily_label):
+    """Insert run result into top-10 list for the chosen mode."""
     boards = profile.setdefault("leaderboards", {"CAMPAIGN": [], "DAILY": []})
     board = boards.setdefault(game_mode, [])
     board.append(
@@ -132,10 +154,12 @@ def update_leaderboard(profile, game_mode, score, level, daily_label):
 
 
 def build_daily_share_code(daily_label, level):
+    """Create a copy/paste code players can share for Daily seeds."""
     return f"DAILY-{daily_label}-{int(level)}"
 
 
 def parse_daily_share_code(code):
+    """Parse and validate shared Daily code text."""
     if not isinstance(code, str):
         return None
     normalized = code.strip().upper()
@@ -158,10 +182,12 @@ def parse_daily_share_code(code):
 
 
 def daily_label_to_seed(label):
+    """Turn day label text into deterministic numeric seed."""
     return sum(ord(ch) for ch in str(label))
 
 
 def get_daily_ghost(profile, daily_label):
+    """Fetch stored ghost for a given Daily label if valid."""
     ghosts = profile.setdefault("ghosts", {})
     ghost = ghosts.get(daily_label)
     if not isinstance(ghost, dict):
@@ -173,6 +199,12 @@ def get_daily_ghost(profile, daily_label):
 
 
 def update_daily_ghost(profile, daily_label, score, level, trace, step, max_saved=30):
+    """
+    Save best ghost for a Daily label.
+
+    Rule:
+    - Replace only when new score is better-or-equal.
+    """
     ghosts = profile.setdefault("ghosts", {})
     existing = ghosts.get(daily_label)
     if isinstance(existing, dict) and int(existing.get("score", 0)) > int(score):

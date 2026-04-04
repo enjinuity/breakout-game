@@ -1,14 +1,24 @@
+"""Falling pickup/hazard entities."""
+
 import pygame
 
+
 class PowerUp:
+    """Represents one falling item the paddle can collect."""
+
     def __init__(self, x, y, width, height, type_):
-        # Create a rectangular power-up object
+        # Collision box + position.
         self.rect = pygame.Rect(x, y, width, height)
 
+        # Effect identity, movement speed, and active-state flag.
         self.type = type_
         self.dy = 3
         self.active = True
+
+        # Negative pickups are hazards, positive ones are bonuses.
         self.negative = type_ in {"small", "fast"}
+
+        # Short text shown on pickup blocks.
         self.label = {
             "life": "1UP",
             "big": "BIG",
@@ -20,6 +30,8 @@ class PowerUp:
             "small": "SML",
             "fast": "FST",
         }.get(type_, "?")
+
+        # Color coding by effect type.
         self.color = {
             "life": (40, 220, 90),
             "big": (40, 140, 255),
@@ -33,15 +45,13 @@ class PowerUp:
         }.get(type_, (255, 255, 255))
 
     def update(self):
-        # Move power-up down the screen
+        """Drop downward and deactivate once out of screen bounds."""
         self.rect.y += self.dy
-
-        # Deactivate if it falls below the screen
         if self.rect.top > 600:
             self.active = False
 
     def draw(self, screen, font=None):
-        # Draw the power-up as a rectangle
+        """Render pickup rectangle and optional text label."""
         pygame.draw.rect(screen, self.color, self.rect)
         pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)
         if font:

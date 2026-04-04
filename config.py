@@ -1,10 +1,23 @@
+"""
+Central place for game tuning values.
+
+Non-technical summary:
+- If you want to change how the game feels, this is usually the first file to edit.
+- Numbers here control screen size, difficulty balance, unlocks, and progression pacing.
+"""
+
+# Base window size for the designed game canvas.
 WIDTH, HEIGHT = 900, 640
+# Top strip used for score/lives/level info.
 HUD_HEIGHT = 64
 
+# Save files used for persistent progress.
 HIGH_SCORE_FILE = "high_score.json"
 PROFILE_FILE = "player_profile.json"
+# Background music file path.
 MUSIC_PATH = "assets/sounds/bgm.wav"
 
+# Hand-authored campaign brick layouts.
 LEVEL_LAYOUTS = [
     [
         "..........",
@@ -29,6 +42,7 @@ LEVEL_LAYOUTS = [
     ],
 ]
 
+# Difficulty presets that adjust risk/reward.
 DIFFICULTY_CONFIG = {
     "EASY": {"lives": 5, "speed": 5.4, "drop_chance": 0.30, "speed_step": 0.45, "score_mult": 0.9},
     "NORMAL": {"lives": 3, "speed": 6.0, "drop_chance": 0.24, "speed_step": 0.55, "score_mult": 1.0},
@@ -39,9 +53,12 @@ CAMPAIGN_LEVELS = 9
 BOSS_LEVEL_INTERVAL = 3
 DAILY_BOSS_INTERVAL = 4
 GAME_MODES = ["CAMPAIGN", "DAILY"]
+# Record one ghost sample every N frames.
 GHOST_RECORD_STEP = 2
+# Upper safety limit so ghost data does not grow forever.
 GHOST_MAX_FRAMES = 18000
 
+# Cosmetic unlock catalogs.
 PADDLE_SKINS = {
     "classic": (255, 255, 255),
     "neon": (80, 255, 210),
@@ -53,6 +70,7 @@ BALL_TRAILS = {
     "frost": (140, 220, 255),
 }
 BACKGROUNDS = ["default", "grid", "sunset"]
+# Shop item prices (currency earned from runs).
 SHOP_PRICES = {
     "paddle:neon": 150,
     "paddle:sunset": 250,
