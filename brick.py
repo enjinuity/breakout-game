@@ -1,7 +1,7 @@
 import pygame
 
 class Brick:
-    def __init__(self, x, y, width, height, color, points, hits=1, brick_type="normal"):
+    def __init__(self, x, y, width, height, color, points, hits=1, brick_type="normal", bomb_timer=0):
         # Create a rectangle to represent the brick
         self.rect = pygame.Rect(x, y, width, height)
 
@@ -13,6 +13,9 @@ class Brick:
         self.max_hits = hits
         self.brick_type = brick_type
         self.unbreakable = brick_type == "unbreakable"
+        self.shield_active = brick_type == "shielded"
+        self.regen_timer = 260
+        self.bomb_timer = bomb_timer if bomb_timer else 520
 
     def draw(self, screen):
         # Only draw the brick if it hasn't been destroyed
@@ -29,13 +32,27 @@ class Brick:
             elif self.brick_type == "boss":
                 health_ratio = max(0.15, self.hits / max(1, self.max_hits))
                 color = (255, int(80 + 110 * health_ratio), int(80 + 90 * health_ratio))
+            elif self.brick_type == "regen":
+                color = (80, 220, 120)
+            elif self.brick_type == "teleport":
+                color = (170, 120, 255)
+            elif self.brick_type == "timed_bomb":
+                color = (255, 90, 90)
+            elif self.brick_type == "shielded":
+                color = (80, 170, 255)
 
             pygame.draw.rect(screen, color, self.rect)                # Fill
             pygame.draw.rect(screen, (0, 0, 0), self.rect, 2)         # Black border
+            if self.shield_active:
+                pygame.draw.rect(screen, (220, 255, 255), self.rect, 3)
 
     def hit(self):
         """Apply a hit and return True when destroyed by this hit."""
         if self.unbreakable or self.destroyed:
+            return False
+
+        if self.shield_active:
+            self.shield_active = False
             return False
 
         self.hits -= 1
