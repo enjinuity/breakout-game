@@ -39,9 +39,11 @@ Created as part of the CSC222 Game Development mini-project (2024 Edition).
 1. Install pygame:
    ```bash
    pip install pygame
+   ```
 2. Run the game:
    ```bash
    python3 main.py
+   ```
 
 Requires Python 3.x and Pygame installed
 
