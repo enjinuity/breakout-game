@@ -6,7 +6,17 @@ Non-technical summary:
 - Provides helper math to scale modifier frequency as waves increase.
 """
 
-from config import GAME_MODES
+from config import (
+    GAME_MODES,
+    POWERUP_BAD_TYPES,
+    POWERUP_BAD_WEIGHT,
+    POWERUP_BOSS_DROP_CHANCE,
+    POWERUP_BOSS_POOL,
+    POWERUP_GOOD_TYPES,
+    POWERUP_GOOD_WEIGHT,
+    POWERUP_LEVEL_PENALTY_STEP,
+    POWERUP_MIN_CHANCE,
+)
 
 
 # Predefined boss personalities used by tier/wave.
@@ -74,3 +84,31 @@ def normal_brick_modifier_rolls(level, game_mode):
         base + 0.09,
         base + 0.12,
     )
+
+
+def pick_normal_brick_variant(rng, level, game_mode):
+    regen_roll, teleport_roll, shield_roll, bomb_roll = normal_brick_modifier_rolls(level, game_mode)
+    roll = rng.random()
+    if roll < regen_roll:
+        return "regen"
+    if roll < teleport_roll:
+        return "teleport"
+    if roll < shield_roll:
+        return "shielded"
+    if roll < bomb_roll:
+        return "timed_bomb"
+    return "normal"
+
+
+def roll_powerup_drop(rng, level, base_chance, boss_level):
+    if boss_level:
+        if rng.random() > POWERUP_BOSS_DROP_CHANCE:
+            return None
+        return rng.choice(POWERUP_BOSS_POOL)
+
+    chance = max(POWERUP_MIN_CHANCE, float(base_chance) - (max(1, int(level)) - 1) * POWERUP_LEVEL_PENALTY_STEP)
+    if rng.random() > chance:
+        return None
+
+    pool = list(POWERUP_GOOD_TYPES) * int(POWERUP_GOOD_WEIGHT) + list(POWERUP_BAD_TYPES) * int(POWERUP_BAD_WEIGHT)
+    return rng.choice(pool)

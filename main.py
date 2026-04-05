@@ -14,7 +14,14 @@ import random
 import sys
 from datetime import date
 
-import pygame
+try:
+    import pygame
+except ImportError:
+    import sys
+    print("pygame is not installed. Please install it with: pip install pygame")
+    sys.exit(1)
+
+import scenes as scenes_module
 
 from audio import apply_audio_volume, init_audio, load_game_sounds, start_music_loop
 from ball import Ball
@@ -24,6 +31,9 @@ from config import (
     BOSS_LEVEL_INTERVAL,
     CAMPAIGN_LEVELS,
     DAILY_BOSS_INTERVAL,
+    DAILY_LAYOUT_COLS,
+    DAILY_LAYOUT_ROWS,
+    DAILY_LAYOUT_THRESHOLDS,
     DIFFICULTY_CONFIG,
     GHOST_MAX_FRAMES,
     GHOST_RECORD_STEP,
@@ -52,7 +62,7 @@ from game_state import (
     update_daily_ghost,
     update_leaderboard as update_profile_leaderboard,
 )
-from modes import boss_attack_name, boss_personality_for_level, normal_brick_modifier_rolls
+from modes import boss_attack_name, boss_personality_for_level, pick_normal_brick_variant, roll_powerup_drop
 from paddle import Paddle
 from powerup import PowerUp
 from ui import draw_button
@@ -69,6 +79,402 @@ SMALL_FONT = pygame.font.SysFont("arial", 18)
 BIG_FONT = pygame.font.SysFont("arial", 56)
 SOUNDS = load_game_sounds()
 
+
+
+class BaseScene:
+    def handle_event(self, _game, _event):
+        return
+
+    def update(self, _game, _keys):
+        return
+
+    def draw(self, _game, _surf):
+        return
+
+
+class MenuScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for key, rect in game.menu_buttons.items():
+                if rect.collidepoint(event.pos):
+                    if key == "START":
+                        game.start_new_game()
+                    elif key == "SHOP":
+                        game.set_game_state("SHOP")
+                    elif key == "BOARD":
+                        game.set_game_state("LEADERBOARD")
+                    elif key == "SHARE":
+                        game.daily_share_input = ""
+                        game.daily_share_input_message = ""
+                        game.set_game_state("SEED_INPUT")
+                    elif key == "SETTINGS":
+                        game.open_settings("MENU")
+                    elif key == "QUIT":
+                        game.finalize_run()
+                        game.save_high_score()
+                        pygame.quit()
+                        sys.exit()
+            return
+
+        if event.type != pygame.KEYDOWN:
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            game.finalize_run()
+            game.save_high_score()
+            pygame.quit()
+            sys.exit()
+        if event.key == pygame.K_UP:
+            game.update_difficulty(-1)
+        elif event.key == pygame.K_DOWN:
+            game.update_difficulty(1)
+        elif event.key == pygame.K_LEFT:
+            game.update_mode(-1)
+        elif event.key == pygame.K_RIGHT:
+            game.update_mode(1)
+        elif event.key == pygame.K_s:
+            game.open_settings("MENU")
+        elif event.key == pygame.K_h:
+            game.set_game_state("SHOP")
+        elif event.key == pygame.K_l:
+            game.set_game_state("LEADERBOARD")
+        elif event.key == pygame.K_g:
+            game.daily_share_input = ""
+            game.daily_share_input_message = ""
+            game.set_game_state("SEED_INPUT")
+        elif event.key == pygame.K_RETURN:
+            game.start_new_game()
+
+    def draw(self, game, surf):
+        game.draw_menu(surf)
+
+
+class ShopScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for rect, cat, item, owned, _ in getattr(game, "shop_cards", []):
+                if rect.collidepoint(event.pos):
+                    load = game.loadout()
+                    selected_key = "selected_background" if cat == "bg" else "selected_paddle_skin" if cat == "paddle" else "selected_trail"
+                    if owned:
+                        load[selected_key] = item
+                        game.save_profile()
+                        game.set_power_message(f"Equipped {item}")
+                    else:
+                        ok, msg = game.buy_item(f"{cat}:{item}")
+                        if ok:
+                            load[selected_key] = item
+                            game.save_profile()
+                        game.set_power_message(msg)
+            return
+
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            game.set_game_state("MENU")
+
+    def draw(self, game, surf):
+        game.draw_shop(surf)
+
+
+class LeaderboardScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            game.set_game_state("MENU")
+
+    def draw(self, game, surf):
+        game.draw_leaderboard(surf)
+
+
+class SeedInputScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type != pygame.KEYDOWN:
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            game.set_game_state("MENU")
+            return
+        if event.key == pygame.K_BACKSPACE:
+            game.daily_share_input = game.daily_share_input[:-1]
+            return
+        if event.key == pygame.K_RETURN:
+            parsed = parse_daily_share_code(game.daily_share_input)
+            if parsed:
+                label, level = parsed
+                game.daily_seed_override_label = label
+                game.daily_seed_override_level = level
+                game.daily_share_input_message = f"Loaded code for {label} (shared from wave {level})."
+                game.mode_index = GAME_MODES.index("DAILY")
+                game.game_mode = "DAILY"
+                game.set_game_state("MENU")
+            else:
+                game.daily_share_input_message = "Invalid code format."
+            return
+        if event.unicode and len(event.unicode) == 1 and event.unicode.isprintable():
+            if len(game.daily_share_input) < 40 and (event.unicode.isalnum() or event.unicode in "-_"):
+                game.daily_share_input += event.unicode.upper()
+
+    def draw(self, game, surf):
+        game.draw_seed_input(surf)
+
+
+class RunSummaryScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for key, rect in game.summary_buttons.items():
+                if rect.collidepoint(event.pos):
+                    if key == "MENU":
+                        game.set_game_state("MENU")
+                    elif key == "RETRY":
+                        game.start_new_game()
+            return
+
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            game.set_game_state("MENU")
+        elif event.key == pygame.K_RETURN:
+            game.start_new_game()
+
+    def draw(self, game, surf):
+        game.draw_run_summary(surf)
+
+
+class SettingsScene(BaseScene):
+    def apply_adjustment(self, game, direction):
+        if game.settings_index == 0:
+            game.volume = max(0.0, min(1.0, game.volume + direction * 0.05))
+            game.apply_volume()
+            game.save_profile()
+        elif game.settings_index == 1:
+            game.sfx_volume = max(0.0, min(1.0, game.sfx_volume + direction * 0.05))
+            game.apply_volume()
+            game.save_profile()
+        elif game.settings_index == 2:
+            game.music_volume = max(0.0, min(1.0, game.music_volume + direction * 0.05))
+            game.apply_volume()
+            game.save_profile()
+        elif game.settings_index == 3:
+            game.toggle_bgm()
+        elif game.settings_index == 4:
+            game.toggle_ghost_replay()
+        elif game.settings_index == 5:
+            game.toggle_controls_preset()
+        elif game.settings_index == 6:
+            game.toggle_fullscreen()
+
+    def apply_confirm(self, game):
+        if game.settings_index == 3:
+            game.toggle_bgm()
+        elif game.settings_index == 4:
+            game.toggle_ghost_replay()
+        elif game.settings_index == 5:
+            game.toggle_controls_preset()
+        elif game.settings_index == 6:
+            game.toggle_fullscreen()
+        elif game.settings_index == 7:
+            game.game_state = game.settings_return_state
+
+    def handle_event(self, game, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for idx, minus_rect, plus_rect in getattr(game, "settings_clickables", []):
+                if minus_rect.collidepoint(event.pos):
+                    game.settings_index = idx
+                    self.apply_adjustment(game, -1)
+                if plus_rect.collidepoint(event.pos):
+                    game.settings_index = idx
+                    self.apply_adjustment(game, 1)
+            return
+
+        if event.type != pygame.KEYDOWN:
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            game.game_state = game.settings_return_state
+            return
+
+        if event.key == pygame.K_UP:
+            game.settings_index = (game.settings_index - 1) % 8
+        elif event.key == pygame.K_DOWN:
+            game.settings_index = (game.settings_index + 1) % 8
+        elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+            self.apply_adjustment(game, -1 if event.key == pygame.K_LEFT else 1)
+        elif event.key == pygame.K_RETURN:
+            self.apply_confirm(game)
+
+    def draw(self, game, surf):
+        game.draw_settings(surf)
+
+
+class PlayingScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type != pygame.KEYDOWN:
+            return
+
+        if event.key == pygame.K_ESCAPE:
+            game.game_state = "MENU"
+            game.paused = False
+            return
+
+        if event.key == pygame.K_p and not game.paused:
+            game.paused = True
+            return
+        if event.key == pygame.K_p and game.paused:
+            game.paused = False
+            return
+
+        if game.paused and event.key == pygame.K_r:
+            game.start_new_game()
+            return
+        if game.paused and event.key == pygame.K_q:
+            game.finalize_run()
+            game.game_state = "MENU"
+            game.paused = False
+            return
+        if game.paused and event.key == pygame.K_o:
+            game.open_settings("PLAYING")
+            return
+
+        if event.key == pygame.K_m:
+            game.volume = min(1.0, game.volume + 0.1)
+            game.apply_volume()
+            game.save_profile()
+            return
+        if event.key == pygame.K_n:
+            game.volume = max(0.0, game.volume - 0.1)
+            game.apply_volume()
+            game.save_profile()
+            return
+        if event.key == pygame.K_b:
+            game.toggle_bgm()
+            return
+
+        if event.key == pygame.K_f and not game.paused:
+            game.fire_laser()
+            game.profile["tutorial"]["fired_laser_once"] = True
+            game.save_profile()
+
+    def update(self, game, keys):
+        if game.paused:
+            return
+
+        moved_this_frame = False
+        if keys[game.left_key] and game.paddle.rect.left > 0:
+            game.paddle.rect.x -= game.paddle.speed
+            moved_this_frame = True
+        if keys[game.right_key] and game.paddle.rect.right < WIDTH:
+            game.paddle.rect.x += game.paddle.speed
+            moved_this_frame = True
+
+        if game.controller:
+            axis = game.controller.get_axis(0)
+            if abs(axis) > 0.2:
+                game.paddle.rect.x += int(axis * game.paddle.speed * 1.4)
+                moved_this_frame = True
+            game.paddle.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
+            if game.ball_attached and game.round_start_countdown <= 0 and game.controller.get_button(0):
+                game.ball_attached = False
+                game.run_shots += 1
+            if game.controller.get_button(1):
+                game.fire_laser()
+
+        if moved_this_frame and not game.profile["tutorial"].get("moved_once", False):
+            game.profile["tutorial"]["moved_once"] = True
+            game.save_profile()
+
+        if game.hit_freeze_frames > 0:
+            game.hit_freeze_frames -= 1
+            game.update_particles()
+        else:
+            game.update_balls(keys)
+            game.update_boss_mechanics()
+            game.update_boss_projectiles()
+            game.update_brick_modifiers()
+            game.update_brick_collisions()
+            game.update_powerups()
+            game.update_combo()
+            game.update_particles()
+
+        if game.round_start_countdown > 0:
+            game.round_start_countdown -= 1
+        if game.tutorial_timer > 0:
+            game.tutorial_timer -= 1
+        if game.sticky_timer > 0:
+            game.sticky_timer -= 1
+            if game.sticky_timer == 0:
+                game.sticky_active = False
+        if game.big_paddle_timer > 0:
+            game.big_paddle_timer -= 1
+            if game.big_paddle_timer == 0:
+                center = game.paddle.rect.centerx
+                game.paddle.rect.width = game.default_paddle_width
+                game.paddle.rect.centerx = center
+                game.paddle.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
+
+        if game.slow_timer > 0:
+            game.slow_timer -= 1
+            if game.slow_timer == 0:
+                for ball in game.balls:
+                    ball.apply_speed_scale(1.25)
+
+        if game.power_message_timer > 0:
+            game.power_message_timer -= 1
+        if game.level_flash_timer > 0:
+            game.level_flash_timer -= 1
+
+        if game.laser_cooldown > 0:
+            game.laser_cooldown -= 1
+        if game.laser_flash_timer > 0:
+            game.laser_flash_timer -= 1
+
+        if game.shake_frames > 0:
+            game.shake_frames -= 1
+        else:
+            game.shake_strength = 0
+            game.shake_total_frames = 0
+
+        if game.impact_flash_alpha > 0:
+            game.impact_flash_alpha = max(0, game.impact_flash_alpha - 14)
+
+        game.record_ghost_frame()
+        game.run_frame += 1
+
+        if game.has_cleared_level():
+            game.go_to_next_level()
+
+    def draw(self, game, surf):
+        game.draw_world(surf)
+        game.draw_hud(surf)
+        if game.paused:
+            game.draw_paused(surf)
+
+
+class GameOverScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            game.set_game_state("MENU")
+        elif event.key == pygame.K_RETURN:
+            game.start_new_game()
+
+    def draw(self, game, surf):
+        game.draw_world(surf)
+        game.draw_hud(surf)
+        game.draw_game_over(surf)
+
+
+class CampaignWinScene(BaseScene):
+    def handle_event(self, game, event):
+        if event.type != pygame.KEYDOWN:
+            return
+        if event.key == pygame.K_ESCAPE:
+            game.set_game_state("MENU")
+        elif event.key == pygame.K_RETURN:
+            game.start_new_game()
+
+    def draw(self, game, surf):
+        game.draw_world(surf)
+        game.draw_hud(surf)
+        game.draw_campaign_win(surf)
 
 
 class Game:
@@ -183,6 +589,17 @@ class Game:
         self.apply_volume()
         self.try_start_music()
         self.init_controller()
+        self.scenes = {
+            "MENU": scenes_module.MenuScene(),
+            "SHOP": scenes_module.ShopScene(),
+            "LEADERBOARD": scenes_module.LeaderboardScene(),
+            "SEED_INPUT": scenes_module.SeedInputScene(),
+            "RUN_SUMMARY": scenes_module.RunSummaryScene(),
+            "SETTINGS": scenes_module.SettingsScene(),
+            "PLAYING": scenes_module.PlayingScene(),
+            "GAME_OVER": scenes_module.GameOverScene(),
+            "CAMPAIGN_WIN": scenes_module.CampaignWinScene(),
+        }
 
     def default_profile(self):
         """Return default profile schema (delegates to helper module)."""
@@ -544,23 +961,17 @@ class Game:
     def create_daily_layout(self, level):
         """Generate deterministic Daily brick layout from seed + level."""
         rng = random.Random(self.daily_seed + level * 7919)
-        rows = 6
-        cols = 10
         layout = []
-        for row in range(rows):
+        for _ in range(DAILY_LAYOUT_ROWS):
             row_chars = []
-            for _ in range(cols):
+            for _ in range(DAILY_LAYOUT_COLS):
                 roll = rng.random()
-                if roll < 0.10:
-                    row_chars.append(".")
-                elif roll < 0.63:
-                    row_chars.append("N")
-                elif roll < 0.83:
-                    row_chars.append("S")
-                elif roll < 0.92:
-                    row_chars.append("E")
-                else:
-                    row_chars.append("U")
+                chosen = "N"
+                for threshold, code in DAILY_LAYOUT_THRESHOLDS:
+                    if roll < threshold:
+                        chosen = code
+                        break
+                row_chars.append(chosen)
             layout.append("".join(row_chars))
         return layout
 
@@ -596,15 +1007,14 @@ class Game:
 
                 if code == "N":
                     color = (90 + row * 15, 130 + col * 5, 220)
-                    modifier_roll = random.random()
-                    regen_roll, teleport_roll, shield_roll, bomb_roll = normal_brick_modifier_rolls(level, self.game_mode)
-                    if modifier_roll < regen_roll:
+                    variant = pick_normal_brick_variant(random, level, self.game_mode)
+                    if variant == "regen":
                         bricks.append(Brick(x, y, brick_w - 2, brick_h - 2, color, points=70, hits=2, brick_type="regen"))
-                    elif modifier_roll < teleport_roll:
+                    elif variant == "teleport":
                         bricks.append(Brick(x, y, brick_w - 2, brick_h - 2, color, points=80, hits=2, brick_type="teleport"))
-                    elif modifier_roll < shield_roll:
+                    elif variant == "shielded":
                         bricks.append(Brick(x, y, brick_w - 2, brick_h - 2, color, points=90, hits=2, brick_type="shielded"))
-                    elif modifier_roll < bomb_roll:
+                    elif variant == "timed_bomb":
                         bricks.append(Brick(x, y, brick_w - 2, brick_h - 2, color, points=110, hits=1, brick_type="timed_bomb", bomb_timer=560 - level * 10))
                     else:
                         bricks.append(Brick(x, y, brick_w - 2, brick_h - 2, color, points=40 + (rows - row) * 8))
@@ -623,23 +1033,9 @@ class Game:
 
     def spawn_powerup(self, x, y):
         """Roll random powerup/hazard drop based on mode and level."""
-        if self.is_boss_level(self.level):
-            # Boss waves are tighter; fewer freebies and more pressure.
-            if random.random() > 0.12:
-                return
-            boss_pool = ["laser", "slow", "shield", "small", "fast"]
-            self.spawn_specific_powerup(x, y, random.choice(boss_pool))
-            return
-        level_penalty = (self.level - 1) * 0.03
-        chance = max(0.12, self.powerup_base_chance - level_penalty)
-        if random.random() > chance:
-            return
-
-        good = ["multi", "big", "life", "laser", "slow", "sticky", "shield"]
-        bad = ["small", "fast"]
-        pool = good * 8 + bad * 3
-        power_type = random.choice(pool)
-        self.powerups.append(PowerUp(x, y, 26, 20, power_type))
+        power_type = roll_powerup_drop(random, self.level, self.powerup_base_chance, self.is_boss_level(self.level))
+        if power_type:
+            self.powerups.append(PowerUp(x, y, 26, 20, power_type))
 
     def spawn_particles(self, x, y, color, count=10, layer=1):
         """Create short-lived particles for impact feedback."""
@@ -1109,7 +1505,7 @@ class Game:
     def update_powerups(self):
         """Update falling powerups and apply effects on pickup."""
         for powerup in self.powerups:
-            powerup.update()
+            powerup.update(HEIGHT)
             if powerup.rect.colliderect(self.paddle.rect):
                 self.apply_powerup(powerup)
                 powerup.active = False
@@ -1350,7 +1746,7 @@ class Game:
         total_row_w = btn_w * per_row + 12 * (per_row - 1)
         x0 = WIDTH // 2 - total_row_w // 2
         y0 = HEIGHT - 104
-        mouse = pygame.mouse.get_pos()
+        mouse = getattr(self, "mouse_world_pos", (-10_000, -10_000))
         for i, (key, label) in enumerate(button_specs):
             row = i // per_row
             col = i % per_row
@@ -1543,7 +1939,7 @@ class Game:
             "MENU": pygame.Rect(WIDTH // 2 - 220, HEIGHT - 82, 200, 46),
             "RETRY": pygame.Rect(WIDTH // 2 + 20, HEIGHT - 82, 200, 46),
         }
-        mouse = pygame.mouse.get_pos()
+        mouse = getattr(self, "mouse_world_pos", (-10_000, -10_000))
         for key, rect in self.summary_buttons.items():
             hover = rect.collidepoint(mouse)
             draw_button(surf, rect, "Back to Menu" if key == "MENU" else "Run Again", SMALL_FONT, hover)
@@ -1581,333 +1977,53 @@ class Game:
                 pygame.quit()
                 sys.exit()
 
-            if event.type != pygame.KEYDOWN:
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if self.game_state == "MENU":
-                        for key, rect in self.menu_buttons.items():
-                            if rect.collidepoint(event.pos):
-                                if key == "START":
-                                    self.start_new_game()
-                                elif key == "SHOP":
-                                    self.set_game_state("SHOP")
-                                elif key == "BOARD":
-                                    self.set_game_state("LEADERBOARD")
-                                elif key == "SHARE":
-                                    self.daily_share_input = ""
-                                    self.daily_share_input_message = ""
-                                    self.set_game_state("SEED_INPUT")
-                                elif key == "SETTINGS":
-                                    self.open_settings("MENU")
-                                elif key == "QUIT":
-                                    self.finalize_run()
-                                    self.save_high_score()
-                                    pygame.quit()
-                                    sys.exit()
-                    elif self.game_state == "SHOP":
-                        for rect, cat, item, owned, selected in getattr(self, "shop_cards", []):
-                            if rect.collidepoint(event.pos):
-                                load = self.loadout()
-                                selected_key = "selected_background" if cat == "bg" else "selected_paddle_skin" if cat == "paddle" else "selected_trail"
-                                if owned:
-                                    load[selected_key] = item
-                                    self.save_profile()
-                                    self.set_power_message(f"Equipped {item}")
-                                else:
-                                    ok, msg = self.buy_item(f"{cat}:{item}")
-                                    if ok:
-                                        load[selected_key] = item
-                                        self.save_profile()
-                                    self.set_power_message(msg)
-                    elif self.game_state == "RUN_SUMMARY":
-                        for key, rect in self.summary_buttons.items():
-                            if rect.collidepoint(event.pos):
-                                if key == "MENU":
-                                    self.set_game_state("MENU")
-                                elif key == "RETRY":
-                                    self.start_new_game()
-                    elif self.game_state == "SETTINGS":
-                        for idx, minus_rect, plus_rect in getattr(self, "settings_clickables", []):
-                            if minus_rect.collidepoint(event.pos):
-                                self.settings_index = idx
-                                fake_event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_LEFT)
-                                pygame.event.post(fake_event)
-                            if plus_rect.collidepoint(event.pos):
-                                self.settings_index = idx
-                                fake_event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RIGHT)
-                                pygame.event.post(fake_event)
-                continue
-
-            if self.game_state == "SHOP":
-                if event.key == pygame.K_ESCAPE:
-                    self.set_game_state("MENU")
-                continue
-
-            if self.game_state == "LEADERBOARD":
-                if event.key == pygame.K_ESCAPE:
-                    self.set_game_state("MENU")
-                continue
-
-            if self.game_state == "SEED_INPUT":
-                if event.key == pygame.K_ESCAPE:
-                    self.set_game_state("MENU")
+            if event.type == pygame.KEYDOWN and self.game_state != "SETTINGS":
+                if event.key == pygame.K_m:
+                    self.volume = min(1.0, self.volume + 0.1)
+                    self.apply_volume()
+                    self.save_profile()
                     continue
-                if event.key == pygame.K_BACKSPACE:
-                    self.daily_share_input = self.daily_share_input[:-1]
+                if event.key == pygame.K_n:
+                    self.volume = max(0.0, self.volume - 0.1)
+                    self.apply_volume()
+                    self.save_profile()
                     continue
-                if event.key == pygame.K_RETURN:
-                    parsed = parse_daily_share_code(self.daily_share_input)
-                    if parsed:
-                        label, level = parsed
-                        self.daily_seed_override_label = label
-                        self.daily_seed_override_level = level
-                        self.daily_share_input_message = f"Loaded code for {label} (shared from wave {level})."
-                        self.mode_index = GAME_MODES.index("DAILY")
-                        self.game_mode = "DAILY"
-                        self.set_game_state("MENU")
-                    else:
-                        self.daily_share_input_message = "Invalid code format."
-                    continue
-                if event.unicode and len(event.unicode) == 1 and event.unicode.isprintable():
-                    if len(self.daily_share_input) < 40 and (event.unicode.isalnum() or event.unicode in "-_"):
-                        self.daily_share_input += event.unicode.upper()
-                continue
-
-            if self.game_state == "RUN_SUMMARY":
-                if event.key == pygame.K_ESCAPE:
-                    self.set_game_state("MENU")
-                if event.key == pygame.K_RETURN:
-                    self.start_new_game()
-                continue
-
-            if self.game_state == "SETTINGS":
-                if event.key == pygame.K_ESCAPE:
-                    self.game_state = self.settings_return_state
+                if event.key == pygame.K_b:
+                    self.toggle_bgm()
                     continue
 
-                if event.key == pygame.K_UP:
-                    self.settings_index = (self.settings_index - 1) % 8
-                elif event.key == pygame.K_DOWN:
-                    self.settings_index = (self.settings_index + 1) % 8
-                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                    direction = -1 if event.key == pygame.K_LEFT else 1
-                    if self.settings_index == 0:
-                        self.volume = max(0.0, min(1.0, self.volume + direction * 0.05))
-                        self.apply_volume()
-                        self.save_profile()
-                    elif self.settings_index == 1:
-                        self.sfx_volume = max(0.0, min(1.0, self.sfx_volume + direction * 0.05))
-                        self.apply_volume()
-                        self.save_profile()
-                    elif self.settings_index == 2:
-                        self.music_volume = max(0.0, min(1.0, self.music_volume + direction * 0.05))
-                        self.apply_volume()
-                        self.save_profile()
-                    elif self.settings_index == 3:
-                        self.toggle_bgm()
-                    elif self.settings_index == 4:
-                        self.toggle_ghost_replay()
-                    elif self.settings_index == 5:
-                        self.toggle_controls_preset()
-                    elif self.settings_index == 6:
-                        self.toggle_fullscreen()
-                elif event.key == pygame.K_RETURN:
-                    if self.settings_index == 3:
-                        self.toggle_bgm()
-                    elif self.settings_index == 4:
-                        self.toggle_ghost_replay()
-                    elif self.settings_index == 5:
-                        self.toggle_controls_preset()
-                    elif self.settings_index == 6:
-                        self.toggle_fullscreen()
-                    elif self.settings_index == 7:
-                        self.game_state = self.settings_return_state
-                continue
+            if event.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP) and "pos" in event.dict:
+                world_pos = self.window_to_world(event.dict.get("pos"))
+                if world_pos is None:
+                    continue
+                payload = dict(event.dict)
+                payload["pos"] = world_pos
+                event = pygame.event.Event(event.type, **payload)
 
-            if event.key == pygame.K_ESCAPE:
-                if self.game_state == "PLAYING":
-                    self.game_state = "MENU"
-                    self.paused = False
-                elif self.game_state in {"GAME_OVER", "CAMPAIGN_WIN"}:
-                    self.game_state = "MENU"
-                elif self.game_state == "MENU":
-                    self.finalize_run()
-                    self.save_high_score()
-                    pygame.quit()
-                    sys.exit()
-
-            if self.game_state == "MENU" and event.key == pygame.K_UP:
-                self.update_difficulty(-1)
-            if self.game_state == "MENU" and event.key == pygame.K_DOWN:
-                self.update_difficulty(1)
-            if self.game_state == "MENU" and event.key == pygame.K_LEFT:
-                self.update_mode(-1)
-            if self.game_state == "MENU" and event.key == pygame.K_RIGHT:
-                self.update_mode(1)
-            if self.game_state == "MENU" and event.key == pygame.K_s:
-                self.open_settings("MENU")
-            if self.game_state == "MENU" and event.key == pygame.K_h:
-                self.set_game_state("SHOP")
-            if self.game_state == "MENU" and event.key == pygame.K_l:
-                self.set_game_state("LEADERBOARD")
-            if self.game_state == "MENU" and event.key == pygame.K_g:
-                self.daily_share_input = ""
-                self.daily_share_input_message = ""
-                self.set_game_state("SEED_INPUT")
-
-            if event.key == pygame.K_RETURN:
-                if self.game_state == "MENU":
-                    self.start_new_game()
-                elif self.game_state in {"GAME_OVER", "CAMPAIGN_WIN"}:
-                    self.start_new_game()
-
-            if event.key == pygame.K_p and self.game_state == "PLAYING":
-                self.paused = not self.paused
-
-            if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_r:
-                self.start_new_game()
-            if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_q:
-                self.finalize_run()
-                self.game_state = "MENU"
-                self.paused = False
-            if self.game_state == "PLAYING" and self.paused and event.key == pygame.K_o:
-                self.open_settings("PLAYING")
-
-            if event.key == pygame.K_m:
-                self.volume = min(1.0, self.volume + 0.1)
-                self.apply_volume()
-                self.save_profile()
-            if event.key == pygame.K_n:
-                self.volume = max(0.0, self.volume - 0.1)
-                self.apply_volume()
-                self.save_profile()
-            if event.key == pygame.K_b:
-                self.toggle_bgm()
-
-            if event.key == pygame.K_f and self.game_state == "PLAYING" and not self.paused:
-                self.fire_laser()
-                self.profile["tutorial"]["fired_laser_once"] = True
-                self.save_profile()
+            scene = self.scenes.get(self.game_state)
+            if scene:
+                scene.handle_event(self, event)
 
     def tick(self):
         """Run one full game frame: input -> update -> render."""
         self.handle_events()
-
         keys = pygame.key.get_pressed()
-
-        if self.game_state == "PLAYING" and not self.paused:
-            moved_this_frame = False
-            if keys[self.left_key] and self.paddle.rect.left > 0:
-                self.paddle.rect.x -= self.paddle.speed
-                moved_this_frame = True
-            if keys[self.right_key] and self.paddle.rect.right < WIDTH:
-                self.paddle.rect.x += self.paddle.speed
-                moved_this_frame = True
-
-            # Basic controller support.
-            if self.controller:
-                axis = self.controller.get_axis(0)
-                if abs(axis) > 0.2:
-                    self.paddle.rect.x += int(axis * self.paddle.speed * 1.4)
-                    moved_this_frame = True
-                self.paddle.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
-                if self.ball_attached and self.round_start_countdown <= 0 and self.controller.get_button(0):
-                    self.ball_attached = False
-                    self.run_shots += 1
-                if self.controller.get_button(1):
-                    self.fire_laser()
-
-            if moved_this_frame and not self.profile["tutorial"].get("moved_once", False):
-                self.profile["tutorial"]["moved_once"] = True
-                self.save_profile()
-
-            if self.hit_freeze_frames > 0:
-                self.hit_freeze_frames -= 1
-                self.update_particles()
-            else:
-                self.update_balls(keys)
-                self.update_boss_mechanics()
-                self.update_boss_projectiles()
-                self.update_brick_modifiers()
-                self.update_brick_collisions()
-                self.update_powerups()
-                self.update_combo()
-                self.update_particles()
-
-            if self.round_start_countdown > 0:
-                self.round_start_countdown -= 1
-            if self.tutorial_timer > 0:
-                self.tutorial_timer -= 1
-            if self.sticky_timer > 0:
-                self.sticky_timer -= 1
-                if self.sticky_timer == 0:
-                    self.sticky_active = False
-            if self.big_paddle_timer > 0:
-                self.big_paddle_timer -= 1
-                if self.big_paddle_timer == 0:
-                    center = self.paddle.rect.centerx
-                    self.paddle.rect.width = self.default_paddle_width
-                    self.paddle.rect.centerx = center
-                    self.paddle.rect.clamp_ip(pygame.Rect(0, 0, WIDTH, HEIGHT))
-
-            if self.slow_timer > 0:
-                self.slow_timer -= 1
-                if self.slow_timer == 0:
-                    for ball in self.balls:
-                        ball.apply_speed_scale(1.25)
-
-            if self.power_message_timer > 0:
-                self.power_message_timer -= 1
-            if self.level_flash_timer > 0:
-                self.level_flash_timer -= 1
-            if self.laser_cooldown > 0:
-                self.laser_cooldown -= 1
-            if self.laser_flash_timer > 0:
-                self.laser_flash_timer -= 1
-            if self.shake_frames > 0:
-                self.shake_frames -= 1
-            else:
-                self.shake_strength = 0
-                self.shake_total_frames = 0
-            if self.impact_flash_alpha > 0:
-                self.impact_flash_alpha = max(0, self.impact_flash_alpha - 14)
-
-            self.record_ghost_frame()
-            self.run_frame += 1
-
-            if self.has_cleared_level():
-                self.go_to_next_level()
+        scene = self.scenes.get(self.game_state)
+        if scene:
+            scene.update(self, keys)
 
         self.render()
 
     def render(self):
         """Render current scene to off-screen world then scale to window."""
+        self.mouse_world_pos = self.window_to_world(pygame.mouse.get_pos()) or (-10_000, -10_000)
         world = pygame.Surface((WIDTH, HEIGHT))
-
-        if self.game_state == "MENU":
-            self.draw_menu(world)
-        elif self.game_state == "SHOP":
-            self.draw_shop(world)
-        elif self.game_state == "LEADERBOARD":
-            self.draw_leaderboard(world)
-        elif self.game_state == "SEED_INPUT":
-            self.draw_seed_input(world)
-        elif self.game_state == "RUN_SUMMARY":
-            self.draw_run_summary(world)
-        elif self.game_state == "SETTINGS":
-            self.draw_settings(world)
-        elif self.game_state == "GAME_OVER":
-            self.draw_world(world)
-            self.draw_hud(world)
-            self.draw_game_over(world)
-        elif self.game_state == "CAMPAIGN_WIN":
-            self.draw_world(world)
-            self.draw_hud(world)
-            self.draw_campaign_win(world)
+        scene = self.scenes.get(self.game_state)
+        if scene:
+            scene.draw(self, world)
         else:
             self.draw_world(world)
             self.draw_hud(world)
-            if self.paused:
-                self.draw_paused(world)
 
         self.update_transition()
         self.draw_transition(world)
@@ -1941,6 +2057,22 @@ class Game:
         offset_y = (screen_h - target_h) // 2
         SCREEN.blit(frame, (offset_x + int(shake_x * scale), offset_y + int(shake_y * scale)))
         pygame.display.flip()
+
+    def window_to_world(self, pos):
+        screen_w, screen_h = SCREEN.get_size()
+        scale = min(screen_w / WIDTH, screen_h / HEIGHT)
+        target_w = max(1, int(WIDTH * scale))
+        target_h = max(1, int(HEIGHT * scale))
+        offset_x = (screen_w - target_w) // 2
+        offset_y = (screen_h - target_h) // 2
+        x, y = pos
+        if x < offset_x or x >= offset_x + target_w or y < offset_y or y >= offset_y + target_h:
+            return None
+        wx = int((x - offset_x) / scale)
+        wy = int((y - offset_y) / scale)
+        wx = max(0, min(WIDTH - 1, wx))
+        wy = max(0, min(HEIGHT - 1, wy))
+        return wx, wy
 
 
 def main():

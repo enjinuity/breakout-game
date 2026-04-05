@@ -1,6 +1,7 @@
 """Unit tests for standalone save/progression helpers in game_state.py."""
 
 import os
+import random
 import tempfile
 import unittest
 
@@ -17,6 +18,7 @@ from game_state import (
     update_daily_ghost,
     update_leaderboard,
 )
+from modes import pick_normal_brick_variant, roll_powerup_drop
 
 
 class GameStateModuleTests(unittest.TestCase):
@@ -60,7 +62,13 @@ class GameStateModuleTests(unittest.TestCase):
         self.assertIsNone(parse_daily_share_code("INVALID-CODE"))
 
     def test_daily_seed(self):
-        self.assertEqual(daily_label_to_seed("ABC"), ord("A") + ord("B") + ord("C"))
+        seed1 = daily_label_to_seed("ABC")
+        seed2 = daily_label_to_seed("ABC")
+        seed3 = daily_label_to_seed("ABD")
+        self.assertIsInstance(seed1, int)
+        self.assertGreaterEqual(seed1, 0)
+        self.assertEqual(seed1, seed2)
+        self.assertNotEqual(seed1, seed3)
 
     def test_daily_ghost_save_and_fetch(self):
         profile = load_profile(self.profile_path, 0)
@@ -73,6 +81,40 @@ class GameStateModuleTests(unittest.TestCase):
 
         worse = update_daily_ghost(profile, "2026-04-04", 1100, 5, trace, 2)
         self.assertFalse(worse)
+
+    def test_mode_roll_helpers_are_deterministic(self):
+        rng1 = random.Random(123)
+        rng2 = random.Random(123)
+        seq1 = [pick_normal_brick_variant(rng1, level=5, game_mode="CAMPAIGN") for _ in range(20)]
+        seq2 = [pick_normal_brick_variant(rng2, level=5, game_mode="CAMPAIGN") for _ in range(20)]
+        self.assertEqual(seq1, seq2)
+
+    def test_powerup_roll_returns_known_types(self):
+        class FixedRng:
+            def __init__(self, values):
+                self.values = list(values)
+
+            def random(self):
+                if self.values:
+                    return self.values.pop(0)
+                return 1.0
+
+            def choice(self, seq):
+                return seq[0]
+
+        boss_rng = FixedRng([0.0])
+        boss = roll_powerup_drop(boss_rng, level=3, base_chance=0.25, boss_level=True)
+        self.assertIsNotNone(boss)
+
+        boss_rng_none = FixedRng([0.99])
+        self.assertIsNone(roll_powerup_drop(boss_rng_none, level=3, base_chance=0.25, boss_level=True))
+
+        normal_rng = FixedRng([0.0])
+        normal = roll_powerup_drop(normal_rng, level=3, base_chance=0.01, boss_level=False)
+        self.assertIsNotNone(normal)
+
+        normal_rng_none = FixedRng([0.99])
+        self.assertIsNone(roll_powerup_drop(normal_rng_none, level=3, base_chance=0.01, boss_level=False))
 
 
 if __name__ == "__main__":

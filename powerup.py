@@ -44,10 +44,10 @@ class PowerUp:
             "fast": (255, 60, 30),
         }.get(type_, (255, 255, 255))
 
-    def update(self):
+    def update(self, screen_height):
         """Drop downward and deactivate once out of screen bounds."""
         self.rect.y += self.dy
-        if self.rect.top > 600:
+        if self.rect.top > int(screen_height):
             self.active = False
 
     def draw(self, screen, font=None):

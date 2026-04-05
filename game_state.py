@@ -9,6 +9,7 @@ Non-technical summary:
 
 import json
 import os
+import hashlib
 from datetime import date
 
 
@@ -183,7 +184,9 @@ def parse_daily_share_code(code):
 
 def daily_label_to_seed(label):
     """Turn day label text into deterministic numeric seed."""
-    return sum(ord(ch) for ch in str(label))
+    payload = str(label).encode("utf-8")
+    digest = hashlib.sha256(payload).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 def get_daily_ghost(profile, daily_label):

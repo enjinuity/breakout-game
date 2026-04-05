@@ -79,3 +79,22 @@ SHOP_PRICES = {
     "bg:grid": 200,
     "bg:sunset": 260,
 }
+
+DAILY_LAYOUT_ROWS = 6
+DAILY_LAYOUT_COLS = 10
+DAILY_LAYOUT_THRESHOLDS = (
+    (0.10, "."),
+    (0.63, "N"),
+    (0.83, "S"),
+    (0.92, "E"),
+    (1.00, "U"),
+)
+
+POWERUP_BOSS_DROP_CHANCE = 0.12
+POWERUP_BOSS_POOL = ("laser", "slow", "shield", "small", "fast")
+POWERUP_LEVEL_PENALTY_STEP = 0.03
+POWERUP_MIN_CHANCE = 0.12
+POWERUP_GOOD_TYPES = ("multi", "big", "life", "laser", "slow", "sticky", "shield")
+POWERUP_BAD_TYPES = ("small", "fast")
+POWERUP_GOOD_WEIGHT = 8
+POWERUP_BAD_WEIGHT = 3
